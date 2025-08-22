@@ -30,10 +30,10 @@ fn init_logic(
 }
 
 fn contract_logic(
-  context: &sdk::Context<State, StateEvent>,
+  context: &sdk::Context<StateEvent>,
   contract_result: &mut sdk::ContractResult<State>,
 ) {
-  let state = &mut contract_result.final_state;
+  let state = &mut contract_result.state;
   match context.event.clone() {
       StateEvent::ChangeData { data } => {
         state.data = data.clone();
@@ -49,12 +49,11 @@ fn contract_test() {
   };
 
   let context = sdk::Context {
-    initial_state: initial_state.clone(),
     event: StateEvent::ChangeData { data: "KoreLedger".to_owned() },
     is_owner: false
   };
   let mut result = sdk::ContractResult::new(initial_state);
   contract_logic(&context, &mut result);
-  assert_eq!(result.final_state.data, "KoreLedger");
+  assert_eq!(result.state.data, "KoreLedger");
   assert!(result.success);
 }

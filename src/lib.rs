@@ -12,9 +12,7 @@ pub use self::value_wrapper::ValueWrapper;
 
 /// Contrat execution context.
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Context<State, Event> {
-    /// Initial state of the contract
-    pub initial_state: State,
+pub struct Context<Event> {
     /// Event that triggered the contract execution
     pub event: Event,
     /// Is the sender of the event the owner of the contract
@@ -25,7 +23,7 @@ pub struct Context<State, Event> {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ContractResult<State> {
     /// Final state of the contract.
-    pub final_state: State,
+    pub state: State,
     /// Is the contract execution successful?
     pub success: bool,
     /// Contract error
@@ -93,7 +91,7 @@ impl ContractInitCheckBorsh {
 impl<State> ContractResult<State> {
     pub fn new(state: State) -> Self {
         Self {
-            final_state: state,
+            state,
             success: false,
             error: String::default()
         }
@@ -171,7 +169,7 @@ pub fn execute_contract<F, State, Event>(
 where
     State: for<'a> Deserialize<'a> + Serialize + Clone,
     Event: for<'a> Deserialize<'a> + Serialize,
-    F: Fn(&Context<State, Event>, &mut ContractResult<State>),
+    F: Fn(&Context<Event>, &mut ContractResult<State>),
 {
     {
         let error: String;
@@ -206,13 +204,12 @@ where
             };
             let is_owner = if is_owner == 1 { true } else { false };
             let context = Context {
-                initial_state: state.clone(),
                 event,
                 is_owner
             };
             let mut contract_result = ContractResult::new(state);
             callback(&context, &mut contract_result);
-            let Ok(state_value) = serde_json::to_value(&contract_result.final_state) else {
+            let Ok(state_value) = serde_json::to_value(&contract_result.state) else {
                 error = "Can not convert contract final state into Value".to_owned();
                 break 'process;
             };
