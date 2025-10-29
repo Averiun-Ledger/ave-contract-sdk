@@ -20,21 +20,6 @@ use serde_json::{Map, Number, Value};
 /// - Array: Ordered collections of values
 /// - Object: Key-value maps
 /// - Null: Null values
-///
-/// # Example
-///
-/// ```ignore
-/// use serde_json::json;
-///
-/// let value = json!({"count": 42, "name": "test"});
-/// let wrapper = ValueWrapper(value);
-///
-/// // Serialize to Borsh binary format
-/// let bytes = borsh::to_vec(&wrapper).unwrap();
-///
-/// // Deserialize back from Borsh
-/// let restored: ValueWrapper = borsh::from_slice(&bytes).unwrap();
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct ValueWrapper(pub Value);
 
