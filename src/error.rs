@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-/// Internal error types for the Kore Contract SDK.
+/// Internal error types for the Ave Contract SDK.
 ///
 /// These errors are used internally by the SDK to handle failures during
 /// serialization and deserialization operations. They are not exposed to
@@ -27,4 +27,18 @@ pub(crate) enum Error {
     /// deserialization library.
     #[error("Deserialization error: {0}")]
     Deserialization(String),
+
+    /// Error that occurs when attempting to allocate memory exceeding the maximum allowed size.
+    ///
+    /// This error prevents denial-of-service attacks where malicious contracts or hosts
+    /// attempt to exhaust memory by requesting extremely large allocations.
+    #[error("Memory limit exceeded: requested {requested} bytes, maximum allowed is {max} bytes")]
+    MemoryLimitExceeded { requested: usize, max: usize },
+
+    /// Error that occurs when an integer conversion would overflow.
+    ///
+    /// This error prevents memory corruption that could occur from implicit integer
+    /// truncation in type casts.
+    #[error("Integer overflow: {0}")]
+    IntegerOverflow(String),
 }

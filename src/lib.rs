@@ -9,6 +9,11 @@ use serde::{Deserialize, Serialize};
 
 pub use self::value_wrapper::ValueWrapper;
 
+// Security limits to prevent denial-of-service attacks
+/// Maximum size in bytes for data read from host memory.
+/// Prevents memory exhaustion from malicious hosts providing huge lengths.
+const MAX_DATA_SIZE: i32 = 10_000_000; // 10MB
+
 /// Contract execution context.
 ///
 /// This structure contains all the information about the event that triggered
@@ -214,7 +219,11 @@ where
     {
         let error: String;
         'process: {
-            let Ok(state_value) = deserialize(get_from_context(state_ptr)) else {
+            let Ok(state_bytes) = get_from_context(state_ptr) else {
+                error = "Can not read State from host memory".to_owned();
+                break 'process;
+            };
+            let Ok(state_value) = deserialize(state_bytes) else {
                 error = "Can not deserialize State".to_owned();
                 break 'process;
             };
@@ -236,7 +245,9 @@ where
             };
             return result_ptr;
         }
-        store(&ContractInitCheckBorsh::error(&error)).expect("Contract store process failed")
+        // Attempt to return error via store, but if that fails too, return 0 pointer
+        // The host should handle 0 pointer as a fatal error
+        store(&ContractInitCheckBorsh::error(&error)).unwrap_or(0)
     }
 }
 
@@ -335,14 +346,22 @@ where
     {
         let error: String;
         'process: {
-            let Ok(state_value) = deserialize(get_from_context(state_ptr)) else {
+            let Ok(state_bytes) = get_from_context(state_ptr) else {
+                error = "Can not read State from host memory".to_owned();
+                break 'process;
+            };
+            let Ok(state_value) = deserialize(state_bytes) else {
                 error = "Can not deserialize State".to_owned();
                 break 'process;
             };
             let state = match serde_json::from_value::<State>(state_value.0) {
                 Ok(state) => state,
                 Err(_) => {
-                    let Ok(init_state) = deserialize(get_from_context(init_state_ptr)) else {
+                    let Ok(init_state_bytes) = get_from_context(init_state_ptr) else {
+                        error = "Can not read Init State from host memory".to_owned();
+                        break 'process;
+                    };
+                    let Ok(init_state) = deserialize(init_state_bytes) else {
                         error = "Can not deserialize Init State".to_owned();
                         break 'process;
                     };
@@ -355,7 +374,11 @@ where
                     init_state
                 }
             };
-            let Ok(event_value) = deserialize(get_from_context(event_ptr)) else {
+            let Ok(event_bytes) = get_from_context(event_ptr) else {
+                error = "Can not read Event from host memory".to_owned();
+                break 'process;
+            };
+            let Ok(event_value) = deserialize(event_bytes) else {
                 error = "Can not deserialize Event".to_owned();
                 break 'process;
             };
@@ -363,7 +386,7 @@ where
                 error = "Can not convert Event from value".to_owned();
                 break 'process;
             };
-            let is_owner = if is_owner == 1 { true } else { false };
+            let is_owner = is_owner == 1;
             let context = Context {
                 event,
                 is_owner
@@ -387,7 +410,9 @@ where
             };
             return result_ptr;
         };
-        store(&ContractResultBorsh::error(&error)).expect("Contract store process failed")
+        // Attempt to return error via store, but if that fails too, return 0 pointer
+        // The host should handle 0 pointer as a fatal error
+        store(&ContractResultBorsh::error(&error)).unwrap_or(0)
     }
 }
 
@@ -439,16 +464,38 @@ fn serialize<S: BorshSerialize>(data: S) -> Result<Vec<u8>, Error> {
 /// # Returns
 ///
 /// * `Vec<u8>` - The bytes read from host memory.
-fn get_from_context(pointer: i32) -> Vec<u8> {
-    let data = unsafe {
+fn get_from_context(pointer: i32) -> Result<Vec<u8>, Error> {
+    unsafe {
         let len = externf::pointer_len(pointer);
-        let mut data = vec![];
-        for i in 0..len {
-            data.push(externf::read_byte(pointer + i));
+
+        // Security check: prevent excessive memory allocation
+        if len > MAX_DATA_SIZE {
+            return Err(Error::MemoryLimitExceeded {
+                requested: len as usize,
+                max: MAX_DATA_SIZE as usize,
+            });
         }
-        data
-    };
-    data
+
+        // Negative length is invalid
+        if len < 0 {
+            return Err(Error::Deserialization(
+                "Invalid negative length from host".to_owned()
+            ));
+        }
+
+        let mut data = Vec::with_capacity(len as usize);
+        for i in 0..len {
+            // Use checked arithmetic to prevent overflow when accessing host memory
+            let read_ptr = pointer.checked_add(i).ok_or_else(|| {
+                Error::IntegerOverflow(format!(
+                    "Pointer arithmetic overflow: {} + {}",
+                    pointer, i
+                ))
+            })?;
+            data.push(externf::read_byte(read_ptr));
+        }
+        Ok(data)
+    }
 }
 
 /// Stores data in WASM memory to be read by the host.
@@ -472,10 +519,20 @@ fn store<S>(data: &S) -> Result<u32, Error>
 where
     S: BorshSerialize
 {
-    let bytes = serialize(&data).map_err(|e| Error::Serialization(e.to_string()))?;
+    let bytes = serialize(data).map_err(|e| Error::Serialization(e.to_string()))?;
+
+    // Security check: validate size fits in u32
+    let len = u32::try_from(bytes.len()).map_err(|_| {
+        Error::IntegerOverflow(format!(
+            "Serialized data too large: {} bytes exceeds u32::MAX",
+            bytes.len()
+        ))
+    })?;
+
     unsafe {
-        let ptr = externf::alloc(bytes.len() as u32) as u32;
+        let ptr = externf::alloc(len) as u32;
         for (index, byte) in bytes.into_iter().enumerate() {
+            // This cast is safe because we validated len fits in u32 above
             externf::write_byte(ptr, index as u32, byte);
         }
         Ok(ptr)

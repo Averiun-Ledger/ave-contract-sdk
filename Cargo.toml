@@ -1,16 +1,15 @@
 [package]
-name = "kore-contract-sdk"
+name = "ave-contract-sdk"
 version = "0.6.0"
 edition = "2024"
-authors = ["Kore Ledger, SL<dev@kore-ledger.net>"]
-description = "Kore Ledger contract SDK"
+authors = ["Averiun Ledger, SL <info@averiun.com>"]
+description = "Ave contract SDK"
 readme = "README.md"
-homepage = "https://kore-ledger.net"
-repository = "https://github.com/kore-ledger/kore-contract-sdk"
+homepage = "https://www.averiun.com"
+repository = "https://github.com/Averiun-Ledger/ave-contract-sdk"
 license = "AGPL-3.0-only"
-keywords = ["blockchain", "distributed-ledger", "kore", "sustainability"]
-rust-version = "1.85"
-documentation = "https://docs.rs/kore-contract-sdk"
+keywords = ["blockchain", "distributed-ledger", "Averiun", "sustainability"]
+rust-version = "1.90.0"
 
 [dependencies]
 serde = { version = "1.0.219", features = ["derive"] }

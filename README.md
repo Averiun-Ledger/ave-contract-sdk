@@ -1,3 +1,3 @@
-# Kore Ledger Contract SDK
+# Ave Contract SDK
 
-This repository contains the **Kore Ledger Contract SDK** (Software Development Kit). It is a library that must be used to build the logic that directs the life cycle of the **subjects** through the events that modify said life cycle. Consequently, we can say that a **subject schema** always has an associated **contract** that regulates how it evolves. The specification of both is done in **governance**.
+This project is a fork of [kore-contract-sdk](https://github.com/kore-ledger/kore-contract-sdk), originally developed by Kore Ledger, SL, modified in 2025 by Averiun Ledger, SL, and distributed under the same AGPL-3.0-only license.

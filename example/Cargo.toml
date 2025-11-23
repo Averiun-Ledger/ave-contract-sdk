@@ -3,13 +3,7 @@ name = "example"
 version = "0.0.0"
 edition = "2024"
 publish = false
-authors = ["Kore Ledger, SL<dev@kore-ledger.net>"]
-description = "Kore Ledger contract example"
-homepage = "https://kore-ledger.net"
-repository = "https://github.com/kore-ledger/kore-contract-sdk"
-license = "AGPL-3.0-only"
-keywords = ["blockchain", "distributed-ledger", "taple", "sustainability"]
 
 [dependencies]
 serde = { version = "1.0.219", features = ["derive"] }
-kore-contract-sdk = { path = "../" }
+ave-contract-sdk = { path = "../" }

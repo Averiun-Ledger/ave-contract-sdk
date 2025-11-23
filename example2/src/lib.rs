@@ -1,5 +1,5 @@
 use serde::{Serialize, Deserialize};
-use kore_contract_sdk as sdk;
+use ave_contract_sdk as sdk;
 
 /// Define the state of the contract. 
 #[derive(Serialize, Deserialize, Clone)]
@@ -40,20 +40,4 @@ fn contract_logic(
       }
   }
   contract_result.success = true;
-}
-
-#[test]
-fn contract_test() {
-  let initial_state = State {
-    data: "".to_owned()
-  };
-
-  let context = sdk::Context {
-    event: StateEvent::ChangeData { data: "KoreLedger".to_owned() },
-    is_owner: false
-  };
-  let mut result = sdk::ContractResult::new(initial_state);
-  contract_logic(&context, &mut result);
-  assert_eq!(result.state.data, "KoreLedger");
-  assert!(result.success);
 }

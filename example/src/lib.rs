@@ -1,5 +1,5 @@
 use serde::{Serialize, Deserialize};
-use kore_contract_sdk as sdk;
+use ave_contract_sdk as sdk;
 
 /// Define the state of the contract. 
 #[derive(Serialize, Deserialize, Clone)]

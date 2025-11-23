@@ -6,6 +6,13 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
 
+// Maximum recursion depth for deserializing nested structures
+// Prevents stack overflow from deeply nested JSON/Borsh data
+const MAX_RECURSION_DEPTH: usize = 128;
+
+// Maximum array/object length to prevent memory exhaustion
+const MAX_COLLECTION_SIZE: u32 = 100_000;
+
 /// Wrapper for `serde_json::Value` that implements `BorshSerialize` and `BorshDeserialize`.
 ///
 /// This type bridges the gap between JSON-based state/event representations and the
@@ -84,7 +91,17 @@ impl BorshSerialize for ValueWrapper {
             // Serialize array: type tag (3) + length + elements
             Value::Array(data) => {
                 BorshSerialize::serialize(&3u8, writer)?;
-                BorshSerialize::serialize(&(data.len() as u32), writer)?;
+                // Check array length fits in u32
+                let len = u32::try_from(data.len()).map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!(
+                            "Array too large to serialize: {} elements exceeds u32::MAX",
+                            data.len()
+                        ),
+                    )
+                })?;
+                BorshSerialize::serialize(&len, writer)?;
                 for element in data {
                     let element = ValueWrapper(element.to_owned());
                     BorshSerialize::serialize(&element, writer)?;
@@ -94,7 +111,17 @@ impl BorshSerialize for ValueWrapper {
             // Serialize object: type tag (4) + length + key-value pairs
             Value::Object(data) => {
                 BorshSerialize::serialize(&4u8, writer)?;
-                BorshSerialize::serialize(&(data.len() as u32), writer)?;
+                // Check object length fits in u32
+                let len = u32::try_from(data.len()).map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!(
+                            "Object too large to serialize: {} keys exceeds u32::MAX",
+                            data.len()
+                        ),
+                    )
+                })?;
+                BorshSerialize::serialize(&len, writer)?;
                 for (key, value) in data {
                     BorshSerialize::serialize(&key, writer)?;
                     let value = ValueWrapper(value.to_owned());
@@ -121,9 +148,24 @@ impl BorshSerialize for ValueWrapper {
 /// - 3: Array
 /// - 4: Object
 /// - 5: Null
-impl BorshDeserialize for ValueWrapper {
-    #[inline]
-    fn deserialize_reader<R: Read>(reader: &mut R) -> std::io::Result<Self> {
+impl ValueWrapper {
+    /// Internal deserialization with recursion depth tracking.
+    ///
+    /// This prevents stack overflow attacks from deeply nested structures.
+    fn deserialize_reader_with_depth<R: Read>(
+        reader: &mut R,
+        depth: usize,
+    ) -> std::io::Result<Self> {
+        if depth > MAX_RECURSION_DEPTH {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "Recursion depth limit exceeded: maximum depth is {}",
+                    MAX_RECURSION_DEPTH
+                ),
+            ));
+        }
+
         // Read the type discriminator byte
         let order: u8 = BorshDeserialize::deserialize_reader(reader)?;
         match order {
@@ -179,13 +221,37 @@ impl BorshDeserialize for ValueWrapper {
             // Type 3: Array (read length, then elements)
             3 => {
                 let len = u32::deserialize_reader(reader)?;
+
+                // Security check: prevent excessive array sizes
+                if len > MAX_COLLECTION_SIZE {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!(
+                            "Array size too large: {} exceeds maximum of {}",
+                            len, MAX_COLLECTION_SIZE
+                        ),
+                    ));
+                }
+
                 if len == 0 {
                     Ok(ValueWrapper(Value::Array(Vec::new())))
                 } else {
                     let mut result = Vec::with_capacity(len as usize);
+                    // Use checked arithmetic to prevent depth overflow
+                    let next_depth = depth.checked_add(1).ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "Recursion depth counter overflow",
+                        )
+                    })?;
                     for _ in 0..len {
-                        result
-                            .push(ValueWrapper::deserialize_reader(reader)?.0);
+                        result.push(
+                            ValueWrapper::deserialize_reader_with_depth(
+                                reader,
+                                next_depth,
+                            )?
+                            .0,
+                        );
                     }
                     Ok(ValueWrapper(Value::Array(result)))
                 }
@@ -193,10 +259,30 @@ impl BorshDeserialize for ValueWrapper {
             // Type 4: Object (read length, then key-value pairs)
             4 => {
                 let len = u32::deserialize_reader(reader)?;
+
+                // Security check: prevent excessive object sizes
+                if len > MAX_COLLECTION_SIZE {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!(
+                            "Object size too large: {} exceeds maximum of {}",
+                            len, MAX_COLLECTION_SIZE
+                        ),
+                    ));
+                }
+
                 let mut result = Map::new();
+                // Use checked arithmetic to prevent depth overflow
+                let next_depth = depth.checked_add(1).ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "Recursion depth counter overflow",
+                    )
+                })?;
                 for _ in 0..len {
                     let key = String::deserialize_reader(reader)?;
-                    let value = ValueWrapper::deserialize_reader(reader)?;
+                    let value =
+                        ValueWrapper::deserialize_reader_with_depth(reader, next_depth)?;
                     result.insert(key, value.0);
                 }
                 Ok(ValueWrapper(Value::Object(result)))
@@ -211,6 +297,15 @@ impl BorshDeserialize for ValueWrapper {
         }
     }
 }
+
+impl BorshDeserialize for ValueWrapper {
+    #[inline]
+    fn deserialize_reader<R: Read>(reader: &mut R) -> std::io::Result<Self> {
+        // Start deserialization with depth 0
+        ValueWrapper::deserialize_reader_with_depth(reader, 0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
