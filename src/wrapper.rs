@@ -311,10 +311,249 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_value_wrapper() {
+    fn test_value_wrapper_string() {
         let value = ValueWrapper(Value::String("test".to_owned()));
         let vec = borsh::to_vec(&value).unwrap();
         let value2: ValueWrapper = BorshDeserialize::try_from_slice(&vec).unwrap();
         assert_eq!(value, value2);
+    }
+
+    #[test]
+    fn test_value_wrapper_bool() {
+        let value = ValueWrapper(Value::Bool(true));
+        let vec = borsh::to_vec(&value).unwrap();
+        let value2: ValueWrapper = BorshDeserialize::try_from_slice(&vec).unwrap();
+        assert_eq!(value, value2);
+
+        let value_false = ValueWrapper(Value::Bool(false));
+        let vec_false = borsh::to_vec(&value_false).unwrap();
+        let value2_false: ValueWrapper = BorshDeserialize::try_from_slice(&vec_false).unwrap();
+        assert_eq!(value_false, value2_false);
+    }
+
+    #[test]
+    fn test_value_wrapper_number_f64() {
+        let value = ValueWrapper(Value::Number(Number::from_f64(3.14).unwrap()));
+        let vec = borsh::to_vec(&value).unwrap();
+        let value2: ValueWrapper = BorshDeserialize::try_from_slice(&vec).unwrap();
+        assert_eq!(value, value2);
+    }
+
+    #[test]
+    fn test_value_wrapper_number_i64() {
+        let value = ValueWrapper(Value::Number(Number::from(-42i64)));
+        let vec = borsh::to_vec(&value).unwrap();
+        let value2: ValueWrapper = BorshDeserialize::try_from_slice(&vec).unwrap();
+        assert_eq!(value, value2);
+    }
+
+    #[test]
+    fn test_value_wrapper_number_u64() {
+        let value = ValueWrapper(Value::Number(Number::from(12345u64)));
+        let vec = borsh::to_vec(&value).unwrap();
+        let value2: ValueWrapper = BorshDeserialize::try_from_slice(&vec).unwrap();
+        assert_eq!(value, value2);
+    }
+
+    #[test]
+    fn test_value_wrapper_null() {
+        let value = ValueWrapper(Value::Null);
+        let vec = borsh::to_vec(&value).unwrap();
+        let value2: ValueWrapper = BorshDeserialize::try_from_slice(&vec).unwrap();
+        assert_eq!(value, value2);
+    }
+
+    #[test]
+    fn test_value_wrapper_array() {
+        let value = ValueWrapper(Value::Array(vec![
+            Value::Bool(true),
+            Value::String("test".to_owned()),
+            Value::Number(Number::from(42)),
+            Value::Null,
+        ]));
+        let vec = borsh::to_vec(&value).unwrap();
+        let value2: ValueWrapper = BorshDeserialize::try_from_slice(&vec).unwrap();
+        assert_eq!(value, value2);
+    }
+
+    #[test]
+    fn test_value_wrapper_empty_array() {
+        let value = ValueWrapper(Value::Array(vec![]));
+        let vec = borsh::to_vec(&value).unwrap();
+        let value2: ValueWrapper = BorshDeserialize::try_from_slice(&vec).unwrap();
+        assert_eq!(value, value2);
+    }
+
+    #[test]
+    fn test_value_wrapper_object() {
+        let mut map = Map::new();
+        map.insert("name".to_string(), Value::String("Alice".to_owned()));
+        map.insert("age".to_string(), Value::Number(Number::from(30)));
+        map.insert("active".to_string(), Value::Bool(true));
+
+        let value = ValueWrapper(Value::Object(map));
+        let vec = borsh::to_vec(&value).unwrap();
+        let value2: ValueWrapper = BorshDeserialize::try_from_slice(&vec).unwrap();
+        assert_eq!(value, value2);
+    }
+
+    #[test]
+    fn test_value_wrapper_empty_object() {
+        let value = ValueWrapper(Value::Object(Map::new()));
+        let vec = borsh::to_vec(&value).unwrap();
+        let value2: ValueWrapper = BorshDeserialize::try_from_slice(&vec).unwrap();
+        assert_eq!(value, value2);
+    }
+
+    #[test]
+    fn test_value_wrapper_nested_structure() {
+        let mut inner_map = Map::new();
+        inner_map.insert("x".to_string(), Value::Number(Number::from(1)));
+        inner_map.insert("y".to_string(), Value::Number(Number::from(2)));
+
+        let mut outer_map = Map::new();
+        outer_map.insert("point".to_string(), Value::Object(inner_map));
+        outer_map.insert("values".to_string(), Value::Array(vec![
+            Value::Number(Number::from(1)),
+            Value::Number(Number::from(2)),
+            Value::Number(Number::from(3)),
+        ]));
+
+        let value = ValueWrapper(Value::Object(outer_map));
+        let vec = borsh::to_vec(&value).unwrap();
+        let value2: ValueWrapper = BorshDeserialize::try_from_slice(&vec).unwrap();
+        assert_eq!(value, value2);
+    }
+
+    #[test]
+    fn test_value_wrapper_max_recursion_depth() {
+        // Create a deeply nested structure
+        let mut value = Value::Null;
+        for _ in 0..MAX_RECURSION_DEPTH {
+            value = Value::Array(vec![value]);
+        }
+
+        let wrapper = ValueWrapper(value);
+        let vec = borsh::to_vec(&wrapper).unwrap();
+
+        // This should succeed as we're at the limit
+        let result: Result<ValueWrapper, _> = BorshDeserialize::try_from_slice(&vec);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_value_wrapper_exceeds_recursion_depth() {
+        // Create a structure that exceeds max depth
+        let mut value = Value::Null;
+        for _ in 0..=MAX_RECURSION_DEPTH {
+            value = Value::Array(vec![value]);
+        }
+
+        let wrapper = ValueWrapper(value);
+        let vec = borsh::to_vec(&wrapper).unwrap();
+
+        // This should fail due to exceeding recursion limit
+        let result: Result<ValueWrapper, _> = BorshDeserialize::try_from_slice(&vec);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Recursion depth limit exceeded"));
+    }
+
+    #[test]
+    fn test_value_wrapper_large_array() {
+        // Create an array with MAX_COLLECTION_SIZE elements
+        let large_array = vec![Value::Null; MAX_COLLECTION_SIZE as usize];
+        let value = ValueWrapper(Value::Array(large_array));
+        let vec = borsh::to_vec(&value).unwrap();
+        let value2: ValueWrapper = BorshDeserialize::try_from_slice(&vec).unwrap();
+        assert_eq!(value, value2);
+    }
+
+    #[test]
+    fn test_value_wrapper_array_size_overflow() {
+        // Create a byte array that claims to have more than MAX_COLLECTION_SIZE elements
+        let mut bytes = vec![3u8]; // Type tag for Array
+        let oversized_len = MAX_COLLECTION_SIZE + 1;
+        bytes.extend_from_slice(&oversized_len.to_le_bytes());
+
+        let result: Result<ValueWrapper, _> = BorshDeserialize::try_from_slice(&bytes);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Array size too large"));
+    }
+
+    #[test]
+    fn test_value_wrapper_object_size_overflow() {
+        // Create a byte array that claims to have more than MAX_COLLECTION_SIZE keys
+        let mut bytes = vec![4u8]; // Type tag for Object
+        let oversized_len = MAX_COLLECTION_SIZE + 1;
+        bytes.extend_from_slice(&oversized_len.to_le_bytes());
+
+        let result: Result<ValueWrapper, _> = BorshDeserialize::try_from_slice(&bytes);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Object size too large"));
+    }
+
+    #[test]
+    fn test_value_wrapper_invalid_type_tag() {
+        // Use an invalid type tag (6 doesn't exist, valid are 0-5)
+        let bytes = vec![6u8];
+
+        let result: Result<ValueWrapper, _> = BorshDeserialize::try_from_slice(&bytes);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid Value representation"));
+    }
+
+    #[test]
+    fn test_value_wrapper_invalid_number_type() {
+        // Type tag 1 (Number) with invalid internal order 3
+        let bytes = vec![1u8, 3u8];
+
+        let result: Result<ValueWrapper, _> = BorshDeserialize::try_from_slice(&bytes);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid Number representation"));
+    }
+
+    #[test]
+    fn test_value_wrapper_unicode_strings() {
+        let value = ValueWrapper(Value::String("Hello 世界 🌍".to_owned()));
+        let vec = borsh::to_vec(&value).unwrap();
+        let value2: ValueWrapper = BorshDeserialize::try_from_slice(&vec).unwrap();
+        assert_eq!(value, value2);
+    }
+
+    #[test]
+    fn test_value_wrapper_empty_string() {
+        let value = ValueWrapper(Value::String(String::new()));
+        let vec = borsh::to_vec(&value).unwrap();
+        let value2: ValueWrapper = BorshDeserialize::try_from_slice(&vec).unwrap();
+        assert_eq!(value, value2);
+    }
+
+    #[test]
+    fn test_value_wrapper_special_floats() {
+        // Test zero
+        let value = ValueWrapper(Value::Number(Number::from_f64(0.0).unwrap()));
+        let vec = borsh::to_vec(&value).unwrap();
+        let value2: ValueWrapper = BorshDeserialize::try_from_slice(&vec).unwrap();
+        assert_eq!(value, value2);
+
+        // Test negative zero
+        let value = ValueWrapper(Value::Number(Number::from_f64(-0.0).unwrap()));
+        let vec = borsh::to_vec(&value).unwrap();
+        let value2: ValueWrapper = BorshDeserialize::try_from_slice(&vec).unwrap();
+        assert_eq!(value, value2);
+    }
+
+    #[test]
+    fn test_value_wrapper_clone() {
+        let value = ValueWrapper(Value::String("test".to_owned()));
+        let cloned = value.clone();
+        assert_eq!(value, cloned);
+    }
+
+    #[test]
+    fn test_value_wrapper_debug() {
+        let value = ValueWrapper(Value::String("test".to_owned()));
+        let debug_str = format!("{:?}", value);
+        assert!(debug_str.contains("test"));
     }
 }

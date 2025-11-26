@@ -2,12 +2,12 @@
 
 mod error;
 mod externf;
-mod value_wrapper;
+mod wrapper;
 use borsh::{BorshDeserialize, BorshSerialize};
 use error::Error;
 use serde::{Deserialize, Serialize};
 
-pub use self::value_wrapper::ValueWrapper;
+pub use self::wrapper::ValueWrapper;
 
 // Security limits to prevent denial-of-service attacks
 /// Maximum size in bytes for data read from host memory.
@@ -541,4 +541,315 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+    struct TestState {
+        value: i32,
+        name: String,
+    }
+
+    #[derive(Serialize, Deserialize, Debug)]
+    enum TestEvent {
+        Increment,
+        Decrement,
+        SetValue(i32),
+        Rename(String),
+    }
+
+    #[test]
+    fn test_context_creation() {
+        let event = TestEvent::Increment;
+        let context = Context {
+            event,
+            is_owner: true,
+        };
+        assert!(context.is_owner);
+    }
+
+    #[test]
+    fn test_contract_result_new() {
+        let state = TestState {
+            value: 42,
+            name: "test".to_string(),
+        };
+        let result = ContractResult::new(state.clone());
+        assert_eq!(result.state.value, 42);
+        assert!(!result.success);
+        assert_eq!(result.error, "");
+    }
+
+    #[test]
+    fn test_contract_result_success() {
+        let state = TestState {
+            value: 10,
+            name: "Alice".to_string(),
+        };
+        let mut result = ContractResult::new(state);
+        result.state.value = 20;
+        result.success = true;
+
+        assert_eq!(result.state.value, 20);
+        assert!(result.success);
+        assert_eq!(result.error, "");
+    }
+
+    #[test]
+    fn test_contract_result_error() {
+        let state = TestState {
+            value: 5,
+            name: "Bob".to_string(),
+        };
+        let mut result = ContractResult::new(state);
+        result.success = false;
+        result.error = "Invalid operation".to_string();
+
+        assert!(!result.success);
+        assert_eq!(result.error, "Invalid operation");
+    }
+
+    #[test]
+    fn test_contract_init_check_default() {
+        let check = ContractInitCheck::default();
+        assert!(!check.success);
+        assert_eq!(check.error, "");
+    }
+
+    #[test]
+    fn test_contract_init_check_success() {
+        let mut check = ContractInitCheck::default();
+        check.success = true;
+        assert!(check.success);
+        assert_eq!(check.error, "");
+    }
+
+    #[test]
+    fn test_contract_init_check_error() {
+        let mut check = ContractInitCheck::default();
+        check.success = false;
+        check.error = "Invalid initial state".to_string();
+        assert!(!check.success);
+        assert_eq!(check.error, "Invalid initial state");
+    }
+
+    #[test]
+    fn test_contract_result_borsh_error() {
+        let result = ContractResultBorsh::error("test error");
+        assert!(!result.success);
+        assert_eq!(result.error, "test error");
+        assert_eq!(result.final_state.0, serde_json::Value::Null);
+    }
+
+    #[test]
+    fn test_contract_init_check_borsh_ok() {
+        let result = ContractInitCheckBorsh::ok();
+        assert!(result.success);
+        assert_eq!(result.error, "");
+    }
+
+    #[test]
+    fn test_contract_init_check_borsh_error() {
+        let result = ContractInitCheckBorsh::error("validation failed");
+        assert!(!result.success);
+        assert_eq!(result.error, "validation failed");
+    }
+
+    #[test]
+    fn test_serialize_deserialize_roundtrip() {
+        let state = TestState {
+            value: 100,
+            name: "test".to_string(),
+        };
+        let value = serde_json::to_value(&state).unwrap();
+        let wrapper = ValueWrapper(value);
+
+        let serialized = serialize(&wrapper).unwrap();
+        let deserialized = deserialize(serialized).unwrap();
+
+        let recovered_state: TestState = serde_json::from_value(deserialized.0).unwrap();
+        assert_eq!(recovered_state.value, 100);
+        assert_eq!(recovered_state.name, "test");
+    }
+
+    #[test]
+    fn test_serialize_contract_result_borsh() {
+        let state = TestState {
+            value: 42,
+            name: "Alice".to_string(),
+        };
+        let state_value = serde_json::to_value(&state).unwrap();
+        let result = ContractResultBorsh {
+            final_state: ValueWrapper(state_value),
+            success: true,
+            error: String::new(),
+        };
+
+        let serialized = serialize(&result);
+        assert!(serialized.is_ok());
+    }
+
+    #[test]
+    fn test_serialize_contract_init_check_borsh() {
+        let check = ContractInitCheckBorsh {
+            success: true,
+            error: String::new(),
+        };
+
+        let serialized = serialize(&check);
+        assert!(serialized.is_ok());
+    }
+
+    #[test]
+    fn test_deserialize_invalid_data() {
+        let invalid_bytes = vec![0xFF, 0xFF, 0xFF, 0xFF];
+        let result = deserialize(invalid_bytes);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_context_is_owner_true() {
+        let event = TestEvent::SetValue(100);
+        let context = Context {
+            event,
+            is_owner: true,
+        };
+        assert!(context.is_owner);
+    }
+
+    #[test]
+    fn test_context_is_owner_false() {
+        let event = TestEvent::SetValue(100);
+        let context = Context {
+            event,
+            is_owner: false,
+        };
+        assert!(!context.is_owner);
+    }
+
+    #[test]
+    fn test_contract_result_state_modification() {
+        let initial_state = TestState {
+            value: 0,
+            name: "Initial".to_string(),
+        };
+        let mut result = ContractResult::new(initial_state);
+
+        result.state.value = 999;
+        result.state.name = "Modified".to_string();
+        result.success = true;
+
+        assert_eq!(result.state.value, 999);
+        assert_eq!(result.state.name, "Modified");
+        assert!(result.success);
+    }
+
+    #[test]
+    fn test_serialize_complex_nested_structure() {
+        let mut inner_map = serde_json::Map::new();
+        inner_map.insert("nested".to_string(), serde_json::json!({"deep": "value"}));
+
+        let complex_value = serde_json::json!({
+            "array": [1, 2, 3],
+            "object": inner_map,
+            "string": "test",
+            "number": 42,
+            "bool": true,
+            "null": null
+        });
+
+        let wrapper = ValueWrapper(complex_value);
+        let serialized = serialize(&wrapper).unwrap();
+        let deserialized = deserialize(serialized).unwrap();
+
+        assert_eq!(wrapper, deserialized);
+    }
+
+    #[test]
+    fn test_max_data_size_constant() {
+        assert_eq!(MAX_DATA_SIZE, 10_000_000);
+    }
+
+    #[test]
+    fn test_contract_result_json_serialization() {
+        let state = TestState {
+            value: 123,
+            name: "JsonTest".to_string(),
+        };
+        let result = ContractResult {
+            state,
+            success: true,
+            error: String::new(),
+        };
+
+        let json = serde_json::to_string(&result);
+        assert!(json.is_ok());
+
+        let json_str = json.unwrap();
+        assert!(json_str.contains("123"));
+        assert!(json_str.contains("JsonTest"));
+        assert!(json_str.contains("true"));
+    }
+
+    #[test]
+    fn test_context_json_serialization() {
+        let event = TestEvent::Increment;
+        let context = Context {
+            event,
+            is_owner: true,
+        };
+
+        let json = serde_json::to_string(&context);
+        assert!(json.is_ok());
+    }
+
+    #[test]
+    fn test_contract_init_check_json_serialization() {
+        let check = ContractInitCheck {
+            success: true,
+            error: String::new(),
+        };
+
+        let json = serde_json::to_string(&check);
+        assert!(json.is_ok());
+
+        let json_str = json.unwrap();
+        assert!(json_str.contains("true"));
+    }
+
+    #[test]
+    fn test_multiple_contract_results() {
+        let states = vec![
+            TestState { value: 1, name: "one".to_string() },
+            TestState { value: 2, name: "two".to_string() },
+            TestState { value: 3, name: "three".to_string() },
+        ];
+
+        let results: Vec<ContractResult<TestState>> = states
+            .into_iter()
+            .map(ContractResult::new)
+            .collect();
+
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].state.value, 1);
+        assert_eq!(results[1].state.value, 2);
+        assert_eq!(results[2].state.value, 3);
+    }
+
+    #[test]
+    fn test_value_wrapper_public_access() {
+        let value = serde_json::json!({"test": "value"});
+        let wrapper = ValueWrapper(value.clone());
+        assert_eq!(wrapper.0, value);
+    }
+
+    #[test]
+    fn test_empty_error_string() {
+        let state = TestState {
+            value: 0,
+            name: String::new(),
+        };
+        let result = ContractResult::new(state);
+        assert_eq!(result.error.len(), 0);
+    }
 }

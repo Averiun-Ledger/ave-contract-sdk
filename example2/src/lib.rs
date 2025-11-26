@@ -41,3 +41,19 @@ fn contract_logic(
   }
   contract_result.success = true;
 }
+
+#[test]
+fn contract_test() {
+  let initial_state = State {
+    data: "".to_owned()
+  };
+
+  let context = sdk::Context {
+    event: StateEvent::ChangeData { data: "AveLedger".to_owned() },
+    is_owner: false
+  };
+  let mut result = sdk::ContractResult::new(initial_state);
+  contract_logic(&context, &mut result);
+  assert_eq!(result.state.data, "AveLedger");
+  assert!(result.success);
+}
