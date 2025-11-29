@@ -2,12 +2,10 @@
 
 mod error;
 mod externf;
-mod wrapper;
+use ave_common::ValueWrapper;
 use borsh::{BorshDeserialize, BorshSerialize};
 use error::Error;
 use serde::{Deserialize, Serialize};
-
-pub use self::wrapper::ValueWrapper;
 
 // Security limits to prevent denial-of-service attacks
 /// Maximum size in bytes for data read from host memory.
