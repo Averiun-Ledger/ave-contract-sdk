@@ -1,22 +1,22 @@
 [package]
 name = "ave-contract-sdk"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 authors = ["Averiun Ledger, SL <info@averiun.com>"]
 description = "Ave contract SDK"
 readme = "README.md"
-homepage = "https://www.averiun.com"
+homepage = "https://averiun.com"
 repository = "https://github.com/Averiun-Ledger/ave-contract-sdk"
 license = "AGPL-3.0-only"
 keywords = ["blockchain", "distributed-ledger", "Averiun", "sustainability"]
-rust-version = "1.90.0"
+rust-version = "1.91.0"
 
 [dependencies]
 serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.143"
+serde_json = "1.0.148"
 thiserror = "2.0.16"
 borsh = { version = "1.6.0", features = ["derive"] }
-ave-common = { path = "../ave/common" }
+ave-common = { path = "../ave/common", version = "0.1.0"}
 
 [lib]
 crate-type = ["cdylib", "rlib"]
