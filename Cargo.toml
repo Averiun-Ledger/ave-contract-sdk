@@ -1,6 +1,6 @@
 [package]
 name = "ave-contract-sdk"
-version = "0.6.2"
+version = "0.7.0"
 edition = "2024"
 authors = ["Averiun Ledger, SL <info@averiun.com>"]
 description = "Ave contract SDK"
@@ -16,7 +16,7 @@ serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.148"
 thiserror = "2.0.16"
 borsh = { version = "1.6.0", features = ["derive"] }
-ave-common = { path = "../ave/common", version = "0.2.0", default-features = false, features = ["value-wrapper"]}
+ave-common = { path = "../ave/common", version = "0.6.0", default-features = false, features = ["value-wrapper"]}
 
 [lib]
 crate-type = ["cdylib", "rlib"]

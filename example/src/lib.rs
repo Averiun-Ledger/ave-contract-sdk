@@ -1,7 +1,7 @@
 use serde::{Serialize, Deserialize};
 use ave_contract_sdk as sdk;
 
-/// Define the state of the contract. 
+/// Contract state used by the example.
 #[derive(Serialize, Deserialize, Clone)]
 struct State {
   pub one: u32,

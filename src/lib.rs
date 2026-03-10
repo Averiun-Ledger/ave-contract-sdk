@@ -1,5 +1,3 @@
-
-
 mod error;
 mod externf;
 use ave_common::ValueWrapper;
@@ -7,189 +5,114 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use error::Error;
 use serde::{Deserialize, Serialize};
 
-// Security limits to prevent denial-of-service attacks
 /// Maximum size in bytes for data read from host memory.
-/// Prevents memory exhaustion from malicious hosts providing huge lengths.
+/// Prevents excessive allocations from malformed or malicious host input.
 const MAX_DATA_SIZE: i32 = 10_000_000; // 10MB
 
 /// Contract execution context.
-///
-/// This structure contains all the information about the event that triggered
-/// the contract execution and the authorization context.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Context<Event> {
-    /// Event that triggered the contract execution.
-    /// Contains the data describing the action to be performed on the subject's state.
+    /// Event being applied to the current state.
     pub event: Event,
-    /// Indicates whether the sender of the event is the owner of the subject.
-    /// This can be used to implement owner-only operations in the contract logic.
+    /// Whether the event sender is the owner.
     pub is_owner: bool,
 }
 
 /// Contract execution result.
-///
-/// This structure is returned after processing an event and contains the modified state,
-/// a success flag, and optional error information.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ContractResult<State> {
-    /// Final state of the contract after processing the event.
-    /// This state will be persisted if the execution is successful.
+    /// Final state after executing the event.
     pub state: State,
-    /// Indicates whether the contract execution was successful.
-    /// If true, the state changes will be applied; if false, they will be rejected.
+    /// Whether the runtime should apply the state change.
     pub success: bool,
-    /// Error message describing why the execution failed.
-    /// Should be empty when success is true.
-    pub error: String
-}
-
-/// Contract initialization validation result.
-///
-/// This structure is returned after validating the initial state of a contract
-/// before subject creation.
-#[derive(Serialize, Deserialize, Debug, Default)]
-pub struct ContractInitCheck {
-    /// Indicates whether the initial state validation was successful.
-    /// If true, the subject can be created with this initial state;
-    /// if false, creation will be rejected.
-    pub success: bool,
-    /// Error message describing why the initial state validation failed.
-    /// Should be empty when success is true.
+    /// Rejection reason when `success` is `false`.
     pub error: String,
 }
 
-/// Internal contract execution result used for Borsh serialization.
-///
-/// This structure is used internally to serialize the contract result into
-/// a binary format (Borsh) for efficient data transfer across the WASM boundary.
-#[derive(BorshSerialize)]
-struct ContractResultBorsh {
-    /// Final state of the contract wrapped for Borsh serialization.
-    pub final_state: ValueWrapper,
-    /// Indicates whether the contract execution was successful.
+/// Contract initialization validation result.
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct ContractInitCheck {
+    /// Whether the initial state is accepted.
     pub success: bool,
-    /// Error message if the execution failed.
-    pub error: String
+    /// Rejection reason when `success` is `false`.
+    pub error: String,
 }
 
-/// Implementation for creating error results.
+/// Internal execution result serialized back to the host with Borsh.
+#[derive(BorshSerialize)]
+struct ContractResultBorsh {
+    /// Final state wrapped for Borsh serialization.
+    pub final_state: ValueWrapper,
+    /// Whether execution succeeded.
+    pub success: bool,
+    /// Error message when execution failed.
+    pub error: String,
+}
+
 impl ContractResultBorsh {
-    /// Creates a new error result with a null state.
-    ///
-    /// # Arguments
-    ///
-    /// * `error` - The error message describing the failure.
-    ///
-    /// # Returns
-    ///
-    /// A `ContractResultBorsh` instance representing a failed execution.
+    /// Creates a failed result with a null final state.
     pub fn error(error: &str) -> Self {
         Self {
             final_state: ValueWrapper(serde_json::Value::Null),
             success: false,
-            error: error.to_owned()
+            error: error.to_owned(),
         }
     }
 }
 
-/// Internal contract initialization check result used for Borsh serialization.
-///
-/// This structure is used internally to serialize the initialization check result
-/// into a binary format (Borsh) for efficient data transfer across the WASM boundary.
+/// Internal init-check result serialized back to the host with Borsh.
 #[derive(BorshSerialize)]
 struct ContractInitCheckBorsh {
-    /// Indicates whether the initialization check was successful.
+    /// Whether the initial state is valid.
     pub success: bool,
-    /// Error message if the initialization check failed.
-    pub error: String
+    /// Error message when validation failed.
+    pub error: String,
 }
 
-/// Implementation for creating initialization check results.
 impl ContractInitCheckBorsh {
-    /// Creates a new error result indicating validation failure.
-    ///
-    /// # Arguments
-    ///
-    /// * `error` - The error message describing why the initial state is invalid.
-    ///
-    /// # Returns
-    ///
-    /// A `ContractInitCheckBorsh` instance representing a failed validation.
+    /// Creates a failed init-check result.
     pub fn error(error: &str) -> Self {
         Self {
             success: false,
-            error: error.to_owned()
+            error: error.to_owned(),
         }
     }
 
-    /// Creates a new success result indicating validation passed.
-    ///
-    /// # Returns
-    ///
-    /// A `ContractInitCheckBorsh` instance representing a successful validation.
+    /// Creates a successful init-check result.
     pub fn ok() -> Self {
         Self {
             success: true,
-            error: String::default()
+            error: String::default(),
         }
     }
 }
 
-/// Implementation for creating new contract results.
 impl<State> ContractResult<State> {
     /// Creates a new contract result with the given state.
     ///
-    /// The result is initialized with success set to false, which should be
-    /// changed to true by the contract logic if the event is processed successfully.
-    ///
-    /// # Arguments
-    ///
-    /// * `state` - The current state of the contract before processing the event.
-    ///
-    /// # Returns
-    ///
-    /// A new `ContractResult` instance with the provided state.
+    /// New results start as failed and must be marked successful by contract logic.
     pub fn new(state: State) -> Self {
         Self {
             state,
             success: false,
-            error: String::default()
+            error: String::default(),
         }
     }
 }
 
 /// Validates the initial state of a contract before subject creation.
 ///
-/// This function is called by the WASM runtime to check whether a proposed
-/// initial state is valid according to the contract's business rules. It deserializes
-/// the state from the provided memory pointer, executes the validation callback,
-/// and returns a serialized result indicating success or failure.
-///
-/// # Type Parameters
-///
-/// * `State` - The type representing the contract's state. Must implement
-///   `Serialize`, `Deserialize`, and `Clone`.
-/// * `F` - The callback function type that contains the validation logic.
+/// The runtime passes the proposed state through `state_ptr`. The callback decides
+/// whether that state is valid and writes the outcome into `ContractInitCheck`.
 ///
 /// # Arguments
 ///
-/// * `state_ptr` - Memory pointer to the proposed initial state data (provided by the WASM host).
-/// * `callback` - User-defined function that validates the state and sets the result.
+/// * `state_ptr` - Pointer to the proposed initial state in host memory.
+/// * `callback` - Validation function with signature `fn(&State, &mut ContractInitCheck)`.
 ///
 /// # Returns
 ///
-/// * `u32` - Memory pointer to the serialized `ContractInitCheckBorsh` result,
-///   which the host runtime can read to determine if initialization should proceed.
-///
-/// # Callback Signature
-///
-/// The callback function should have the signature:
-/// ```ignore
-/// fn callback(state: &State, result: &mut ContractInitCheck)
-/// ```
-///
-/// The callback should set `result.success = true` if the state is valid,
-/// or `result.success = false` with an error message if it's invalid.
+/// Pointer to a serialized `ContractInitCheckBorsh`.
 ///
 /// # Example
 ///
@@ -206,10 +129,7 @@ impl<State> ContractResult<State> {
 ///     })
 /// }
 /// ```
-pub fn check_init_data<State, F>(
-    state_ptr: i32,
-    callback: F,
-) -> u32
+pub fn check_init_data<State, F>(state_ptr: i32, callback: F) -> u32
 where
     State: for<'a> Deserialize<'a> + Serialize + Clone,
     F: Fn(&State, &mut ContractInitCheck),
@@ -233,7 +153,10 @@ where
             callback(&state, &mut contract_result);
 
             if !contract_result.success {
-                error = format!("Error running init contract data: {}", contract_result.error);
+                error = format!(
+                    "Error running init contract data: {}",
+                    contract_result.error
+                );
                 break 'process;
             }
 
@@ -251,54 +174,23 @@ where
 
 /// Executes a contract by processing an event and updating the subject's state.
 ///
-/// This is the main entry point for contract execution. It is called by the WASM runtime
-/// whenever an event needs to be processed. The function:
-/// 1. Deserializes the current state (or falls back to init state if needed)
-/// 2. Deserializes the event that triggered the execution
-/// 3. Creates a context with the event and ownership information
-/// 4. Executes the user-defined contract logic callback
-/// 5. Serializes and returns the result
-///
-/// # Type Parameters
-///
-/// * `State` - The type representing the contract's state. Must implement
-///   `Serialize`, `Deserialize`, and `Clone`.
-/// * `Event` - The type representing events that can modify the state. Must implement
-///   `Serialize` and `Deserialize`.
-/// * `F` - The callback function type that contains the contract's business logic.
+/// This is the main entry point used by the WASM runtime. It reads the current
+/// state and the incoming event, builds a `Context<Event>`, runs the callback,
+/// and returns the serialized result.
 ///
 /// # Arguments
 ///
-/// * `state_ptr` - Memory pointer to the current state of the contract (provided by the WASM host).
-/// * `init_state_ptr` - Memory pointer to the initial state, used as a fallback if the current
-///   state cannot be deserialized (e.g., for newly created subjects).
-/// * `event_ptr` - Memory pointer to the event data that triggered this execution.
-/// * `is_owner` - Integer flag (0 or 1) indicating whether the event issuer is the subject owner.
-/// * `callback` - User-defined function that implements the contract's logic for processing events.
+/// * `state_ptr` - Pointer to the current state in host memory.
+/// * `init_state_ptr` - Pointer to the initial state used as a fallback when the current state cannot be deserialized.
+/// * `event_ptr` - Pointer to the incoming event in host memory.
+/// * `is_owner` - Ownership flag sent by the runtime. `1` means owner, any other value means non-owner.
+/// * `callback` - Contract logic with signature `fn(&Context<Event>, &mut ContractResult<State>)`.
 ///
 /// # Returns
 ///
-/// * `u32` - Memory pointer to the serialized `ContractResultBorsh`, which contains the
-///   final state, success flag, and any error message. The host runtime reads this to
-///   determine whether to apply the state changes.
+/// Pointer to a serialized `ContractResultBorsh`.
 ///
-/// # State Fallback Mechanism
-///
-/// If the current state at `state_ptr` cannot be deserialized (which happens for new subjects),
-/// the function automatically falls back to using `init_state_ptr`. This allows contracts to
-/// handle initialization gracefully without special-casing the first event.
-///
-/// # Callback Signature
-///
-/// The callback function should have the signature:
-/// ```ignore
-/// fn callback(context: &Context<Event>, result: &mut ContractResult<State>)
-/// ```
-///
-/// The callback should:
-/// - Modify `result.state` as needed based on `context.event`
-/// - Set `result.success = true` if the event should be applied
-/// - Set `result.success = false` and provide `result.error` if the event should be rejected
+/// If `state_ptr` cannot be deserialized, the function falls back to `init_state_ptr`.
 ///
 /// # Example
 ///
@@ -385,10 +277,7 @@ where
                 break 'process;
             };
             let is_owner = is_owner == 1;
-            let context = Context {
-                event,
-                is_owner
-            };
+            let context = Context { event, is_owner };
             let mut contract_result = ContractResult::new(state);
             callback(&context, &mut contract_result);
             let Ok(state_value) = serde_json::to_value(&contract_result.state) else {
@@ -398,10 +287,8 @@ where
             let result = ContractResultBorsh {
                 final_state: ValueWrapper(state_value),
                 success: contract_result.success,
-                error: format!("Error running contract event: {}", contract_result.error)
+                error: format!("Error running contract event: {}", contract_result.error),
             };
-            // After the state has been modified, we must save the new state.
-            // It would be interesting to avoid saving state if the event is non-modifying.
             let Ok(result_ptr) = store(&result) else {
                 error = "Can not return contract result".to_owned();
                 break 'process;
@@ -415,58 +302,23 @@ where
 }
 
 /// Deserializes data from bytes using Borsh format.
-///
-/// Converts a byte vector into a `ValueWrapper` by deserializing from Borsh binary format.
-///
-/// # Arguments
-///
-/// * `bytes` - The byte vector containing Borsh-serialized data.
-///
-/// # Returns
-///
-/// * `Result<ValueWrapper, Error>` - The deserialized value wrapper or an error.
 fn deserialize(bytes: Vec<u8>) -> Result<ValueWrapper, Error> {
     BorshDeserialize::try_from_slice(&bytes).map_err(|e| Error::Deserialization(e.to_string()))
 }
 
 /// Serializes data into bytes using Borsh format.
-///
-/// Converts any data implementing `BorshSerialize` into a byte vector for
-/// efficient transfer across the WASM boundary.
-///
-/// # Type Parameters
-///
-/// * `S` - The type to serialize, must implement `BorshSerialize`.
-///
-/// # Arguments
-///
-/// * `data` - The data to serialize.
-///
-/// # Returns
-///
-/// * `Result<Vec<u8>, Error>` - The serialized bytes or an error.
 fn serialize<S: BorshSerialize>(data: S) -> Result<Vec<u8>, Error> {
     borsh::to_vec(&data).map_err(|e| Error::Serialization(e.to_string()))
 }
 
 /// Reads data from WASM host memory at the given pointer.
 ///
-/// This function uses the external `read_byte` and `pointer_len` functions
-/// to read a complete byte sequence from the host's memory space into the
-/// WASM module's memory.
-///
-/// # Arguments
-///
-/// * `pointer` - Memory pointer provided by the host indicating where to read from.
-///
-/// # Returns
-///
-/// * `Vec<u8>` - The bytes read from host memory.
+/// The host provides a pointer and length through the external memory API.
 fn get_from_context(pointer: i32) -> Result<Vec<u8>, Error> {
     unsafe {
         let len = externf::pointer_len(pointer);
 
-        // Security check: prevent excessive memory allocation
+        // Reject oversized host input before allocating.
         if len > MAX_DATA_SIZE {
             return Err(Error::MemoryLimitExceeded {
                 requested: len as usize,
@@ -474,21 +326,18 @@ fn get_from_context(pointer: i32) -> Result<Vec<u8>, Error> {
             });
         }
 
-        // Negative length is invalid
+        // Negative lengths are invalid host input.
         if len < 0 {
             return Err(Error::Deserialization(
-                "Invalid negative length from host".to_owned()
+                "Invalid negative length from host".to_owned(),
             ));
         }
 
         let mut data = Vec::with_capacity(len as usize);
         for i in 0..len {
-            // Use checked arithmetic to prevent overflow when accessing host memory
+            // Checked arithmetic avoids pointer overflow on malformed input.
             let read_ptr = pointer.checked_add(i).ok_or_else(|| {
-                Error::IntegerOverflow(format!(
-                    "Pointer arithmetic overflow: {} + {}",
-                    pointer, i
-                ))
+                Error::IntegerOverflow(format!("Pointer arithmetic overflow: {} + {}", pointer, i))
             })?;
             data.push(externf::read_byte(read_ptr));
         }
@@ -498,28 +347,14 @@ fn get_from_context(pointer: i32) -> Result<Vec<u8>, Error> {
 
 /// Stores data in WASM memory to be read by the host.
 ///
-/// This function serializes the data to Borsh format, allocates memory in the
-/// WASM module's linear memory space, writes the serialized bytes to that memory,
-/// and returns a pointer that the host can use to read the result.
-///
-/// # Type Parameters
-///
-/// * `S` - The type to store, must implement `BorshSerialize`.
-///
-/// # Arguments
-///
-/// * `data` - The data to serialize and store in memory.
-///
-/// # Returns
-///
-/// * `Result<u32, Error>` - A memory pointer to the stored data, or an error.
+/// Serializes `data`, allocates host-visible memory, and writes the bytes there.
 fn store<S>(data: &S) -> Result<u32, Error>
 where
-    S: BorshSerialize
+    S: BorshSerialize,
 {
     let bytes = serialize(data).map_err(|e| Error::Serialization(e.to_string()))?;
 
-    // Security check: validate size fits in u32
+    // The host allocator expects a `u32` byte length.
     let len = u32::try_from(bytes.len()).map_err(|_| {
         Error::IntegerOverflow(format!(
             "Serialized data too large: {} bytes exceeds u32::MAX",
@@ -530,7 +365,6 @@ where
     unsafe {
         let ptr = externf::alloc(len) as u32;
         for (index, byte) in bytes.into_iter().enumerate() {
-            // This cast is safe because we validated len fits in u32 above
             externf::write_byte(ptr, index as u32, byte);
         }
         Ok(ptr)
@@ -818,15 +652,22 @@ mod tests {
     #[test]
     fn test_multiple_contract_results() {
         let states = vec![
-            TestState { value: 1, name: "one".to_string() },
-            TestState { value: 2, name: "two".to_string() },
-            TestState { value: 3, name: "three".to_string() },
+            TestState {
+                value: 1,
+                name: "one".to_string(),
+            },
+            TestState {
+                value: 2,
+                name: "two".to_string(),
+            },
+            TestState {
+                value: 3,
+                name: "three".to_string(),
+            },
         ];
 
-        let results: Vec<ContractResult<TestState>> = states
-            .into_iter()
-            .map(ContractResult::new)
-            .collect();
+        let results: Vec<ContractResult<TestState>> =
+            states.into_iter().map(ContractResult::new).collect();
 
         assert_eq!(results.len(), 3);
         assert_eq!(results[0].state.value, 1);

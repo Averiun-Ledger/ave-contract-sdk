@@ -1,5 +1,5 @@
 use ave_common::ValueWrapper;
-use ave_contract_sdk::{ContractInitCheck, ContractResult, Context};
+use ave_contract_sdk::{Context, ContractInitCheck, ContractResult};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
