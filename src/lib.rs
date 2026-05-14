@@ -98,6 +98,30 @@ impl<State> ContractResult<State> {
             error: String::default(),
         }
     }
+
+    /// Marks the result as successful.
+    pub fn accept(&mut self) {
+        self.success = true;
+    }
+
+    /// Marks the result as failed with the given message.
+    pub fn reject(&mut self, msg: impl Into<String>) {
+        self.success = false;
+        self.error = msg.into();
+    }
+}
+
+impl ContractInitCheck {
+    /// Marks the check as successful.
+    pub fn accept(&mut self) {
+        self.success = true;
+    }
+
+    /// Marks the check as failed with the given message.
+    pub fn reject(&mut self, msg: impl Into<String>) {
+        self.success = false;
+        self.error = msg.into();
+    }
 }
 
 /// Validates the initial state of a contract before subject creation.
@@ -121,10 +145,9 @@ impl<State> ContractResult<State> {
 /// pub unsafe fn init_check_function(state_ptr: i32) -> u32 {
 ///     sdk::check_init_data(state_ptr, |state: &MyState, result| {
 ///         if state.value > 100 {
-///             result.success = false;
-///             result.error = "Value too high".to_string();
+///             result.reject("Value too high");
 ///         } else {
-///             result.success = true;
+///             result.accept();
 ///         }
 ///     })
 /// }
@@ -134,42 +157,35 @@ where
     State: for<'a> Deserialize<'a> + Serialize + Clone,
     F: Fn(&State, &mut ContractInitCheck),
 {
-    {
-        let error: String;
-        'process: {
-            let Ok(state_bytes) = get_from_context(state_ptr) else {
-                error = "Can not read State from host memory".to_owned();
-                break 'process;
-            };
-            let Ok(state_value) = deserialize(state_bytes) else {
-                error = "Can not deserialize State".to_owned();
-                break 'process;
-            };
-            let Ok(state) = serde_json::from_value::<State>(state_value.0) else {
-                error = "Can not convert State from value".to_owned();
-                break 'process;
-            };
-            let mut contract_result = ContractInitCheck::default();
-            callback(&state, &mut contract_result);
-
-            if !contract_result.success {
-                error = format!(
-                    "Error running init contract data: {}",
-                    contract_result.error
-                );
+    let error: String;
+    'process: {
+        let state = match read_and_parse::<State>(state_ptr, "State") {
+            Ok(s) => s,
+            Err(e) => {
+                error = e;
                 break 'process;
             }
+        };
+        let mut contract_result = ContractInitCheck::default();
+        callback(&state, &mut contract_result);
 
-            let Ok(result_ptr) = store(&ContractInitCheckBorsh::ok()) else {
-                error = "Can not return init contract result".to_owned();
-                break 'process;
-            };
-            return result_ptr;
+        if !contract_result.success {
+            error = format!(
+                "Error running init contract data: {}",
+                contract_result.error
+            );
+            break 'process;
         }
-        // Attempt to return error via store, but if that fails too, return 0 pointer
-        // The host should handle 0 pointer as a fatal error
-        store(&ContractInitCheckBorsh::error(&error)).unwrap_or(0)
+
+        let Ok(result_ptr) = store(&ContractInitCheckBorsh::ok()) else {
+            error = "Cannot return init contract result".to_owned();
+            break 'process;
+        };
+        return result_ptr;
     }
+    // Attempt to return error via store, but if that fails too, return 0 pointer.
+    // The host should handle 0 pointer as a fatal error.
+    store(&ContractInitCheckBorsh::error(&error)).unwrap_or(0)
 }
 
 /// Executes a contract by processing an event and updating the subject's state.
@@ -190,7 +206,11 @@ where
 ///
 /// Pointer to a serialized `ContractResultBorsh`.
 ///
-/// If `state_ptr` cannot be deserialized, the function falls back to `init_state_ptr`.
+/// # Fallback behaviour
+///
+/// If `state_ptr` cannot be deserialized (e.g. the subject state is empty on the
+/// first event), the function silently falls back to `init_state_ptr`. This allows
+/// contracts to bootstrap from the initial state defined at creation time.
 ///
 /// # Example
 ///
@@ -206,15 +226,14 @@ where
 ///         match &context.event {
 ///             Event::Update { value } => {
 ///                 result.state.value = *value;
-///                 result.success = true;
+///                 result.accept();
 ///             }
 ///             Event::Delete => {
 ///                 if context.is_owner {
 ///                     result.state.deleted = true;
-///                     result.success = true;
+///                     result.accept();
 ///                 } else {
-///                     result.success = false;
-///                     result.error = "Only owner can delete".to_string();
+///                     result.reject("Only owner can delete");
 ///                 }
 ///             }
 ///         }
@@ -233,72 +252,53 @@ where
     Event: for<'a> Deserialize<'a> + Serialize,
     F: Fn(&Context<Event>, &mut ContractResult<State>),
 {
-    {
-        let error: String;
-        'process: {
-            let Ok(state_bytes) = get_from_context(state_ptr) else {
-                error = "Can not read State from host memory".to_owned();
-                break 'process;
-            };
-            let Ok(state_value) = deserialize(state_bytes) else {
-                error = "Can not deserialize State".to_owned();
-                break 'process;
-            };
-            let state = match serde_json::from_value::<State>(state_value.0) {
-                Ok(state) => state,
-                Err(_) => {
-                    let Ok(init_state_bytes) = get_from_context(init_state_ptr) else {
-                        error = "Can not read Init State from host memory".to_owned();
+    let error: String;
+    'process: {
+        let state = match read_and_parse::<State>(state_ptr, "State") {
+            Ok(state) => state,
+            Err(_) => {
+                match read_and_parse::<State>(init_state_ptr, "Init State") {
+                    Ok(init_state) => init_state,
+                    Err(e) => {
+                        error = e;
                         break 'process;
-                    };
-                    let Ok(init_state) = deserialize(init_state_bytes) else {
-                        error = "Can not deserialize Init State".to_owned();
-                        break 'process;
-                    };
-
-                    let Ok(init_state) = serde_json::from_value::<State>(init_state.0) else {
-                        error = "Can not convert State from value".to_owned();
-                        break 'process;
-                    };
-
-                    init_state
+                    }
                 }
-            };
-            let Ok(event_bytes) = get_from_context(event_ptr) else {
-                error = "Can not read Event from host memory".to_owned();
-                break 'process;
-            };
-            let Ok(event_value) = deserialize(event_bytes) else {
-                error = "Can not deserialize Event".to_owned();
-                break 'process;
-            };
-            let Ok(event) = serde_json::from_value::<Event>(event_value.0) else {
-                error = "Can not convert Event from value".to_owned();
-                break 'process;
-            };
-            let is_owner = is_owner == 1;
-            let context = Context { event, is_owner };
-            let mut contract_result = ContractResult::new(state);
-            callback(&context, &mut contract_result);
-            let Ok(state_value) = serde_json::to_value(&contract_result.state) else {
-                error = "Can not convert contract final state into Value".to_owned();
-                break 'process;
-            };
-            let result = ContractResultBorsh {
-                final_state: ValueWrapper(state_value),
-                success: contract_result.success,
-                error: format!("Error running contract event: {}", contract_result.error),
-            };
-            let Ok(result_ptr) = store(&result) else {
-                error = "Can not return contract result".to_owned();
-                break 'process;
-            };
-            return result_ptr;
+            }
         };
-        // Attempt to return error via store, but if that fails too, return 0 pointer
-        // The host should handle 0 pointer as a fatal error
-        store(&ContractResultBorsh::error(&error)).unwrap_or(0)
+        let event = match read_and_parse::<Event>(event_ptr, "Event") {
+            Ok(e) => e,
+            Err(e) => {
+                error = e;
+                break 'process;
+            }
+        };
+        let is_owner = is_owner == 1;
+        let context = Context { event, is_owner };
+        let mut contract_result = ContractResult::new(state);
+        callback(&context, &mut contract_result);
+        let Ok(state_value) = serde_json::to_value(&contract_result.state) else {
+            error = "Cannot convert contract final state into Value".to_owned();
+            break 'process;
+        };
+        let result = ContractResultBorsh {
+            final_state: ValueWrapper(state_value),
+            success: contract_result.success,
+            error: if contract_result.success {
+                String::new()
+            } else {
+                format!("Error running contract event: {}", contract_result.error)
+            },
+        };
+        let Ok(result_ptr) = store(&result) else {
+            error = "Cannot return contract result".to_owned();
+            break 'process;
+        };
+        return result_ptr;
     }
+    // Attempt to return error via store, but if that fails too, return 0 pointer.
+    // The host should handle 0 pointer as a fatal error.
+    store(&ContractResultBorsh::error(&error)).unwrap_or(0)
 }
 
 /// Deserializes data from bytes using Borsh format.
@@ -309,6 +309,25 @@ fn deserialize(bytes: Vec<u8>) -> Result<ValueWrapper, Error> {
 /// Serializes data into bytes using Borsh format.
 fn serialize<S: BorshSerialize>(data: S) -> Result<Vec<u8>, Error> {
     borsh::to_vec(&data).map_err(|e| Error::Serialization(e.to_string()))
+}
+
+/// Reads a typed value from host memory through the full deserialization pipeline.
+///
+/// 1. Reads raw bytes from the host at `ptr`.
+/// 2. Deserializes the Borsh payload into a `ValueWrapper`.
+/// 3. Converts the inner JSON value into the requested type `T`.
+///
+/// `context_name` is used only to build informative error messages.
+fn read_and_parse<T>(ptr: i32, context_name: &str) -> Result<T, String>
+where
+    T: for<'a> Deserialize<'a>,
+{
+    let bytes = get_from_context(ptr)
+        .map_err(|e| format!("Cannot read {context_name} from host memory: {e}"))?;
+    let wrapper = deserialize(bytes)
+        .map_err(|e| format!("Cannot deserialize {context_name}: {e}"))?;
+    serde_json::from_value::<T>(wrapper.0)
+        .map_err(|e| format!("Cannot parse {context_name} from JSON value: {e}"))
 }
 
 /// Reads data from WASM host memory at the given pointer.
@@ -363,7 +382,14 @@ where
     })?;
 
     unsafe {
-        let ptr = externf::alloc(len) as u32;
+        let raw_ptr = externf::alloc(len);
+        if raw_ptr == 0 {
+            return Err(Error::MemoryLimitExceeded {
+                requested: bytes.len(),
+                max: MAX_DATA_SIZE as usize,
+            });
+        }
+        let ptr = raw_ptr as u32;
         for (index, byte) in bytes.into_iter().enumerate() {
             externf::write_byte(ptr, index as u32, byte);
         }
@@ -690,5 +716,46 @@ mod tests {
         };
         let result = ContractResult::new(state);
         assert_eq!(result.error.len(), 0);
+    }
+
+    #[test]
+    fn test_contract_result_accept() {
+        let state = TestState {
+            value: 1,
+            name: "test".to_string(),
+        };
+        let mut result = ContractResult::new(state);
+        assert!(!result.success);
+        result.accept();
+        assert!(result.success);
+        assert_eq!(result.error, "");
+    }
+
+    #[test]
+    fn test_contract_result_reject() {
+        let state = TestState {
+            value: 1,
+            name: "test".to_string(),
+        };
+        let mut result = ContractResult::new(state);
+        result.reject("something went wrong");
+        assert!(!result.success);
+        assert_eq!(result.error, "something went wrong");
+    }
+
+    #[test]
+    fn test_contract_init_check_accept() {
+        let mut check = ContractInitCheck::default();
+        assert!(!check.success);
+        check.accept();
+        assert!(check.success);
+    }
+
+    #[test]
+    fn test_contract_init_check_reject() {
+        let mut check = ContractInitCheck::default();
+        check.reject("invalid state");
+        assert!(!check.success);
+        assert_eq!(check.error, "invalid state");
     }
 }
