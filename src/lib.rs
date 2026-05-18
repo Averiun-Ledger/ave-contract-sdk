@@ -1,6 +1,6 @@
 mod error;
 mod externf;
-use ave_common::ValueWrapper;
+use ave_common::{ContractData, ContractInitCheckData, ContractResultData};
 use borsh::{BorshDeserialize, BorshSerialize};
 use error::Error;
 use serde::{Deserialize, Serialize};
@@ -38,54 +38,9 @@ pub struct ContractInitCheck {
     pub error: String,
 }
 
-/// Internal execution result serialized back to the host with Borsh.
-#[derive(BorshSerialize)]
-struct ContractResultBorsh {
-    /// Final state wrapped for Borsh serialization.
-    pub final_state: ValueWrapper,
-    /// Whether execution succeeded.
-    pub success: bool,
-    /// Error message when execution failed.
-    pub error: String,
-}
 
-impl ContractResultBorsh {
-    /// Creates a failed result with a null final state.
-    pub fn error(error: &str) -> Self {
-        Self {
-            final_state: ValueWrapper(serde_json::Value::Null),
-            success: false,
-            error: error.to_owned(),
-        }
-    }
-}
 
-/// Internal init-check result serialized back to the host with Borsh.
-#[derive(BorshSerialize)]
-struct ContractInitCheckBorsh {
-    /// Whether the initial state is valid.
-    pub success: bool,
-    /// Error message when validation failed.
-    pub error: String,
-}
 
-impl ContractInitCheckBorsh {
-    /// Creates a failed init-check result.
-    pub fn error(error: &str) -> Self {
-        Self {
-            success: false,
-            error: error.to_owned(),
-        }
-    }
-
-    /// Creates a successful init-check result.
-    pub fn ok() -> Self {
-        Self {
-            success: true,
-            error: String::default(),
-        }
-    }
-}
 
 impl<State> ContractResult<State> {
     /// Creates a new contract result with the given state.
@@ -136,7 +91,7 @@ impl ContractInitCheck {
 ///
 /// # Returns
 ///
-/// Pointer to a serialized `ContractInitCheckBorsh`.
+/// Pointer to a serialized `ContractInitCheckData`.
 ///
 /// # Example
 ///
@@ -177,7 +132,7 @@ where
             break 'process;
         }
 
-        let Ok(result_ptr) = store(&ContractInitCheckBorsh::ok()) else {
+        let Ok(result_ptr) = store(&ContractInitCheckData::ok()) else {
             error = "Cannot return init contract result".to_owned();
             break 'process;
         };
@@ -185,7 +140,7 @@ where
     }
     // Attempt to return error via store, but if that fails too, return 0 pointer.
     // The host should handle 0 pointer as a fatal error.
-    store(&ContractInitCheckBorsh::error(&error)).unwrap_or(0)
+    store(&ContractInitCheckData::error(&error)).unwrap_or(0)
 }
 
 /// Executes a contract by processing an event and updating the subject's state.
@@ -204,7 +159,7 @@ where
 ///
 /// # Returns
 ///
-/// Pointer to a serialized `ContractResultBorsh`.
+/// Pointer to a serialized `ContractResultData`.
 ///
 /// # Fallback behaviour
 ///
@@ -277,12 +232,15 @@ where
         let context = Context { event, is_owner };
         let mut contract_result = ContractResult::new(state);
         callback(&context, &mut contract_result);
-        let Ok(state_value) = serde_json::to_value(&contract_result.state) else {
-            error = "Cannot convert contract final state into Value".to_owned();
-            break 'process;
+        let state_bytes = match serde_json::to_vec(&contract_result.state) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                error = "Cannot serialize contract final state into JSON bytes".to_owned();
+                break 'process;
+            }
         };
-        let result = ContractResultBorsh {
-            final_state: ValueWrapper(state_value),
+        let result = ContractResultData {
+            final_state: ContractData(state_bytes),
             success: contract_result.success,
             error: if contract_result.success {
                 String::new()
@@ -298,11 +256,11 @@ where
     }
     // Attempt to return error via store, but if that fails too, return 0 pointer.
     // The host should handle 0 pointer as a fatal error.
-    store(&ContractResultBorsh::error(&error)).unwrap_or(0)
+    store(&ContractResultData::error(&error)).unwrap_or(0)
 }
 
 /// Deserializes data from bytes using Borsh format.
-fn deserialize(bytes: Vec<u8>) -> Result<ValueWrapper, Error> {
+fn deserialize(bytes: Vec<u8>) -> Result<ContractData, Error> {
     BorshDeserialize::try_from_slice(&bytes).map_err(|e| Error::Deserialization(e.to_string()))
 }
 
@@ -314,8 +272,8 @@ fn serialize<S: BorshSerialize>(data: S) -> Result<Vec<u8>, Error> {
 /// Reads a typed value from host memory through the full deserialization pipeline.
 ///
 /// 1. Reads raw bytes from the host at `ptr`.
-/// 2. Deserializes the Borsh payload into a `ValueWrapper`.
-/// 3. Converts the inner JSON value into the requested type `T`.
+/// 2. Deserializes the Borsh payload into a `ContractData` (raw JSON bytes).
+/// 3. Parses the JSON bytes directly into the requested type `T` without an intermediate DOM.
 ///
 /// `context_name` is used only to build informative error messages.
 fn read_and_parse<T>(ptr: i32, context_name: &str) -> Result<T, String>
@@ -324,10 +282,10 @@ where
 {
     let bytes = get_from_context(ptr)
         .map_err(|e| format!("Cannot read {context_name} from host memory: {e}"))?;
-    let wrapper = deserialize(bytes)
+    let data: ContractData = deserialize(bytes)
         .map_err(|e| format!("Cannot deserialize {context_name}: {e}"))?;
-    serde_json::from_value::<T>(wrapper.0)
-        .map_err(|e| format!("Cannot parse {context_name} from JSON value: {e}"))
+    serde_json::from_slice::<T>(&data.0)
+        .map_err(|e| format!("Cannot parse {context_name} from JSON bytes: {e}"))
 }
 
 /// Reads data from WASM host memory at the given pointer.
@@ -353,13 +311,8 @@ fn get_from_context(pointer: i32) -> Result<Vec<u8>, Error> {
         }
 
         let mut data = Vec::with_capacity(len as usize);
-        for i in 0..len {
-            // Checked arithmetic avoids pointer overflow on malformed input.
-            let read_ptr = pointer.checked_add(i).ok_or_else(|| {
-                Error::IntegerOverflow(format!("Pointer arithmetic overflow: {} + {}", pointer, i))
-            })?;
-            data.push(externf::read_byte(read_ptr));
-        }
+        data.set_len(len as usize);
+        externf::read_bytes(pointer, data.as_mut_ptr() as i32, len);
         Ok(data)
     }
 }
@@ -390,9 +343,7 @@ where
             });
         }
         let ptr = raw_ptr as u32;
-        for (index, byte) in bytes.into_iter().enumerate() {
-            externf::write_byte(ptr, index as u32, byte);
-        }
+        externf::write_bytes(ptr as i32, bytes.as_ptr() as i32, len as i32);
         Ok(ptr)
     }
 }
@@ -400,6 +351,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ave_common::ValueWrapper;
     use serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -492,23 +444,24 @@ mod tests {
     }
 
     #[test]
-    fn test_contract_result_borsh_error() {
-        let result = ContractResultBorsh::error("test error");
+    fn test_contract_result_data_error() {
+        let result = ContractResultData::error("test error");
         assert!(!result.success);
         assert_eq!(result.error, "test error");
-        assert_eq!(result.final_state.0, serde_json::Value::Null);
+        let json_value: serde_json::Value = serde_json::from_slice(&result.final_state.0).unwrap();
+        assert_eq!(json_value, serde_json::Value::Null);
     }
 
     #[test]
-    fn test_contract_init_check_borsh_ok() {
-        let result = ContractInitCheckBorsh::ok();
+    fn test_contract_init_check_data_ok() {
+        let result = ContractInitCheckData::ok();
         assert!(result.success);
         assert_eq!(result.error, "");
     }
 
     #[test]
-    fn test_contract_init_check_borsh_error() {
-        let result = ContractInitCheckBorsh::error("validation failed");
+    fn test_contract_init_check_data_error() {
+        let result = ContractInitCheckData::error("validation failed");
         assert!(!result.success);
         assert_eq!(result.error, "validation failed");
     }
@@ -519,26 +472,26 @@ mod tests {
             value: 100,
             name: "test".to_string(),
         };
-        let value = serde_json::to_value(&state).unwrap();
-        let wrapper = ValueWrapper(value);
+        let json_bytes = serde_json::to_vec(&state).unwrap();
+        let data = ContractData(json_bytes);
 
-        let serialized = serialize(&wrapper).unwrap();
-        let deserialized = deserialize(serialized).unwrap();
+        let serialized = serialize(&data).unwrap();
+        let deserialized: ContractData = deserialize(serialized).unwrap();
 
-        let recovered_state: TestState = serde_json::from_value(deserialized.0).unwrap();
+        let recovered_state: TestState = serde_json::from_slice(&deserialized.0).unwrap();
         assert_eq!(recovered_state.value, 100);
         assert_eq!(recovered_state.name, "test");
     }
 
     #[test]
-    fn test_serialize_contract_result_borsh() {
+    fn test_serialize_contract_result_data() {
         let state = TestState {
             value: 42,
             name: "Alice".to_string(),
         };
-        let state_value = serde_json::to_value(&state).unwrap();
-        let result = ContractResultBorsh {
-            final_state: ValueWrapper(state_value),
+        let state_bytes = serde_json::to_vec(&state).unwrap();
+        let result = ContractResultData {
+            final_state: ContractData(state_bytes),
             success: true,
             error: String::new(),
         };
@@ -548,8 +501,8 @@ mod tests {
     }
 
     #[test]
-    fn test_serialize_contract_init_check_borsh() {
-        let check = ContractInitCheckBorsh {
+    fn test_serialize_contract_init_check_data() {
+        let check = ContractInitCheckData {
             success: true,
             error: String::new(),
         };
@@ -616,11 +569,14 @@ mod tests {
             "null": null
         });
 
-        let wrapper = ValueWrapper(complex_value);
-        let serialized = serialize(&wrapper).unwrap();
-        let deserialized = deserialize(serialized).unwrap();
+        let json_bytes = serde_json::to_vec(&complex_value).unwrap();
+        let data = ContractData(json_bytes);
+        let serialized = serialize(&data).unwrap();
+        let deserialized: ContractData = deserialize(serialized).unwrap();
 
-        assert_eq!(wrapper, deserialized);
+        let original_json: serde_json::Value = serde_json::from_slice(&data.0).unwrap();
+        let recovered_json: serde_json::Value = serde_json::from_slice(&deserialized.0).unwrap();
+        assert_eq!(original_json, recovered_json);
     }
 
     #[test]
