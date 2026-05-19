@@ -68,7 +68,7 @@ mod tests {
     #[test]
     fn test_error_debug_format() {
         let error = Error::Serialization("test".to_string());
-        let debug_str = format!("{:?}", error);
+        let debug_str = format!("{error:?}");
         assert!(debug_str.contains("Serialization"));
         assert!(debug_str.contains("test"));
     }

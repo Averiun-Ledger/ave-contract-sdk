@@ -57,3 +57,14 @@ fn contract_test() {
   assert_eq!(result.state.data, "AveLedger");
   assert!(result.success);
 }
+
+#[test]
+fn init_test() {
+  let state = State {
+    data: "initial".to_owned()
+  };
+  let mut check = sdk::ContractInitCheck::default();
+  init_logic(&state, &mut check);
+  assert!(check.success);
+}
+

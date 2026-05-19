@@ -7,3 +7,4 @@ publish = false
 [dependencies]
 serde = { version = "1.0.219", features = ["derive"] }
 ave-contract-sdk = { path = "../" }
+

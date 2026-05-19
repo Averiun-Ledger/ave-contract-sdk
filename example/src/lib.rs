@@ -81,6 +81,40 @@ fn contract_test() {
 }
 
 #[test]
+fn contract_test_mod_two() {
+  let initial_state = State {
+    one: 1,
+    two: 2,
+    three: 3
+  };
+  let context = sdk::Context {
+    event: StateEvent::ModTwo { data: 42 },
+    is_owner: false
+  };
+  let mut result = sdk::ContractResult::new(initial_state);
+  contract_logic(&context, &mut result);
+  assert_eq!(result.state.two, 42);
+  assert!(result.success);
+}
+
+#[test]
+fn contract_test_mod_three_success() {
+  let initial_state = State {
+    one: 1,
+    two: 2,
+    three: 3
+  };
+  let context = sdk::Context {
+    event: StateEvent::ModThree { data: 49 },
+    is_owner: false
+  };
+  let mut result = sdk::ContractResult::new(initial_state);
+  contract_logic(&context, &mut result);
+  assert_eq!(result.state.three, 49);
+  assert!(result.success);
+}
+
+#[test]
 fn contract_test_fail() {
   let initial_state = State {
     one: 1,
@@ -97,3 +131,35 @@ fn contract_test_fail() {
   assert_eq!(result.error, "Can not change three value, 50 is a invalid value");
   assert!(!result.success);
 }
+
+#[test]
+fn contract_test_mod_all() {
+  let initial_state = State {
+    one: 1,
+    two: 2,
+    three: 3
+  };
+  let context = sdk::Context {
+    event: StateEvent::ModAll { one: 10, two: 20, three: 30 },
+    is_owner: false
+  };
+  let mut result = sdk::ContractResult::new(initial_state);
+  contract_logic(&context, &mut result);
+  assert_eq!(result.state.one, 10);
+  assert_eq!(result.state.two, 20);
+  assert_eq!(result.state.three, 30);
+  assert!(result.success);
+}
+
+#[test]
+fn init_test() {
+  let state = State {
+    one: 1,
+    two: 2,
+    three: 3
+  };
+  let mut check = sdk::ContractInitCheck::default();
+  init_logic(&state, &mut check);
+  assert!(check.success);
+}
+
