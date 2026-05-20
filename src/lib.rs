@@ -394,15 +394,6 @@ mod tests {
         Rename(String),
     }
 
-    #[test]
-    fn test_context_creation() {
-        let event = TestEvent::Increment;
-        let context = Context {
-            event,
-            is_owner: true,
-        };
-        assert!(context.is_owner);
-    }
 
     #[test]
     fn test_contract_result_new() {
@@ -416,58 +407,10 @@ mod tests {
         assert_eq!(result.error, "");
     }
 
-    #[test]
-    fn test_contract_result_success() {
-        let state = TestState {
-            value: 10,
-            name: "Alice".to_string(),
-        };
-        let mut result = ContractResult::new(state);
-        result.state.value = 20;
-        result.success = true;
 
-        assert_eq!(result.state.value, 20);
-        assert!(result.success);
-        assert_eq!(result.error, "");
-    }
 
-    #[test]
-    fn test_contract_result_error() {
-        let state = TestState {
-            value: 5,
-            name: "Bob".to_string(),
-        };
-        let mut result = ContractResult::new(state);
-        result.success = false;
-        result.error = "Invalid operation".to_string();
 
-        assert!(!result.success);
-        assert_eq!(result.error, "Invalid operation");
-    }
 
-    #[test]
-    fn test_contract_init_check_default() {
-        let check = ContractInitCheck::default();
-        assert!(!check.success);
-        assert_eq!(check.error, "");
-    }
-
-    #[test]
-    fn test_contract_init_check_success() {
-        let mut check = ContractInitCheck::default();
-        check.success = true;
-        assert!(check.success);
-        assert_eq!(check.error, "");
-    }
-
-    #[test]
-    fn test_contract_init_check_error() {
-        let mut check = ContractInitCheck::default();
-        check.success = false;
-        check.error = "Invalid initial state".to_string();
-        assert!(!check.success);
-        assert_eq!(check.error, "Invalid initial state");
-    }
 
     #[test]
     fn test_contract_result_data_error() {
@@ -509,33 +452,7 @@ mod tests {
         assert_eq!(recovered_state.name, "test");
     }
 
-    #[test]
-    fn test_serialize_contract_result_data() {
-        let state = TestState {
-            value: 42,
-            name: "Alice".to_string(),
-        };
-        let state_bytes = serde_json::to_vec(&state).unwrap();
-        let result = ContractResultData {
-            final_state: ContractData(state_bytes),
-            success: true,
-            error: String::new(),
-        };
 
-        let serialized = serialize(&result);
-        assert!(serialized.is_ok());
-    }
-
-    #[test]
-    fn test_serialize_contract_init_check_data() {
-        let check = ContractInitCheckData {
-            success: true,
-            error: String::new(),
-        };
-
-        let serialized = serialize(&check);
-        assert!(serialized.is_ok());
-    }
 
     #[test]
     fn test_deserialize_invalid_data() {
@@ -544,71 +461,10 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[test]
-    fn test_context_is_owner_true() {
-        let event = TestEvent::SetValue(100);
-        let context = Context {
-            event,
-            is_owner: true,
-        };
-        assert!(context.is_owner);
-    }
 
-    #[test]
-    fn test_context_is_owner_false() {
-        let event = TestEvent::SetValue(100);
-        let context = Context {
-            event,
-            is_owner: false,
-        };
-        assert!(!context.is_owner);
-    }
 
-    #[test]
-    fn test_contract_result_state_modification() {
-        let initial_state = TestState {
-            value: 0,
-            name: "Initial".to_string(),
-        };
-        let mut result = ContractResult::new(initial_state);
 
-        result.state.value = 999;
-        result.state.name = "Modified".to_string();
-        result.success = true;
 
-        assert_eq!(result.state.value, 999);
-        assert_eq!(result.state.name, "Modified");
-        assert!(result.success);
-    }
-
-    #[test]
-    fn test_serialize_complex_nested_structure() {
-        let mut inner_map = serde_json::Map::new();
-        inner_map.insert("nested".to_string(), serde_json::json!({"deep": "value"}));
-
-        let complex_value = serde_json::json!({
-            "array": [1, 2, 3],
-            "object": inner_map,
-            "string": "test",
-            "number": 42,
-            "bool": true,
-            "null": null
-        });
-
-        let json_bytes = serde_json::to_vec(&complex_value).unwrap();
-        let data = ContractData(json_bytes);
-        let serialized = serialize(&data).unwrap();
-        let deserialized: ContractData = deserialize(&serialized).unwrap();
-
-        let original_json: serde_json::Value = serde_json::from_slice(&data.0).unwrap();
-        let recovered_json: serde_json::Value = serde_json::from_slice(&deserialized.0).unwrap();
-        assert_eq!(original_json, recovered_json);
-    }
-
-    #[test]
-    fn test_max_data_size_constant() {
-        assert_eq!(MAX_DATA_SIZE, 10_000_000);
-    }
 
     #[test]
     fn test_contract_result_json_serialization() {
@@ -631,74 +487,10 @@ mod tests {
         assert!(json_str.contains("true"));
     }
 
-    #[test]
-    fn test_context_json_serialization() {
-        let event = TestEvent::Increment;
-        let context = Context {
-            event,
-            is_owner: true,
-        };
 
-        let json = serde_json::to_string(&context);
-        assert!(json.is_ok());
-    }
 
-    #[test]
-    fn test_contract_init_check_json_serialization() {
-        let check = ContractInitCheck {
-            success: true,
-            error: String::new(),
-        };
 
-        let json = serde_json::to_string(&check);
-        assert!(json.is_ok());
 
-        let json_str = json.unwrap();
-        assert!(json_str.contains("true"));
-    }
-
-    #[test]
-    fn test_multiple_contract_results() {
-        let states = vec![
-            TestState {
-                value: 1,
-                name: "one".to_string(),
-            },
-            TestState {
-                value: 2,
-                name: "two".to_string(),
-            },
-            TestState {
-                value: 3,
-                name: "three".to_string(),
-            },
-        ];
-
-        let results: Vec<ContractResult<TestState>> =
-            states.into_iter().map(ContractResult::new).collect();
-
-        assert_eq!(results.len(), 3);
-        assert_eq!(results[0].state.value, 1);
-        assert_eq!(results[1].state.value, 2);
-        assert_eq!(results[2].state.value, 3);
-    }
-
-    #[test]
-    fn test_value_wrapper_public_access() {
-        let value = serde_json::json!({"test": "value"});
-        let wrapper = ValueWrapper(value.clone());
-        assert_eq!(wrapper.0, value);
-    }
-
-    #[test]
-    fn test_empty_error_string() {
-        let state = TestState {
-            value: 0,
-            name: String::new(),
-        };
-        let result = ContractResult::new(state);
-        assert_eq!(result.error.len(), 0);
-    }
 
     #[test]
     fn test_contract_result_accept() {
@@ -1156,5 +948,258 @@ mod tests {
                 .error
                 .contains("Cannot serialize contract final state into JSON bytes")
         );
+    }
+    #[test]
+    fn test_context_json_roundtrip() {
+        let event = TestEvent::SetValue(42);
+        let context = Context {
+            event,
+            is_owner: true,
+        };
+
+        let json = serde_json::to_string(&context).unwrap();
+        let recovered: Context<TestEvent> = serde_json::from_str(&json).unwrap();
+        match recovered.event {
+            TestEvent::SetValue(v) => assert_eq!(v, 42),
+            _ => panic!("Wrong event type"),
+        }
+        assert!(recovered.is_owner);
+    }
+
+    #[test]
+    fn test_contract_init_check_json_roundtrip() {
+        let mut check = ContractInitCheck::default();
+        check.reject("bad state");
+
+        let json = serde_json::to_string(&check).unwrap();
+        let recovered: ContractInitCheck = serde_json::from_str(&json).unwrap();
+        assert!(!recovered.success);
+        assert_eq!(recovered.error, "bad state");
+    }
+
+    #[test]
+    fn test_is_owner_boundary_values() {
+        externf::reset();
+        let state = TestState {
+            value: 0,
+            name: "test".to_string(),
+        };
+        let state_ptr = setup_host_data(&state);
+        let event = TestEvent::Increment;
+        let event_ptr = setup_host_data(&event);
+
+        // is_owner = 1 means owner
+        let ptr1 = execute_contract::<_, TestState, TestEvent>(
+            state_ptr, state_ptr, event_ptr, 1, |_ctx, res| {
+                if _ctx.is_owner {
+                    res.state.value = 100;
+                    res.accept();
+                } else {
+                    res.reject("not owner");
+                }
+            },
+        );
+        let r1: ContractResultData = read_host_result(ptr1);
+        assert!(r1.success);
+        let s1: TestState = serde_json::from_slice(&r1.final_state.0).unwrap();
+        assert_eq!(s1.value, 100);
+
+        // Any value other than 1 should be treated as non-owner
+        for raw in [0, 2, -1, 99] {
+            let ptr = execute_contract::<_, TestState, TestEvent>(
+                state_ptr, state_ptr, event_ptr, raw, |_ctx, res| {
+                    if _ctx.is_owner {
+                        res.state.value = 100;
+                        res.accept();
+                    } else {
+                        res.reject("not owner");
+                    }
+                },
+            );
+            let r: ContractResultData = read_host_result(ptr);
+            assert!(!r.success, "expected failure for is_owner={}", raw);
+            assert!(r.error.contains("not owner"));
+        }
+    }
+
+    #[test]
+    fn test_check_init_data_callback_leaves_default() {
+        externf::reset();
+        let state = TestState {
+            value: 10,
+            name: "test".to_string(),
+        };
+        let ptr = setup_host_data(&state);
+
+        // Callback does nothing: check remains with success = false
+        let result_ptr = check_init_data::<TestState, _>(ptr, |_state, _check| {
+            // intentionally empty
+        });
+
+        assert!(result_ptr != 0);
+        let result: ContractInitCheckData = read_host_result(result_ptr);
+        assert!(!result.success);
+        assert!(result.error.contains("Error running init contract data"));
+    }
+
+    #[test]
+    fn test_contract_result_accept_then_reject() {
+        let state = TestState {
+            value: 1,
+            name: "test".to_string(),
+        };
+        let mut result = ContractResult::new(state);
+        result.accept();
+        assert!(result.success);
+        result.reject("changed mind");
+        assert!(!result.success);
+        assert_eq!(result.error, "changed mind");
+    }
+
+    #[test]
+    fn test_contract_init_check_accept_then_reject() {
+        let mut check = ContractInitCheck::default();
+        check.accept();
+        assert!(check.success);
+        check.reject("revised");
+        assert!(!check.success);
+        assert_eq!(check.error, "revised");
+    }
+
+    #[test]
+    fn test_contract_result_data_roundtrip() {
+        let state = TestState {
+            value: 77,
+            name: "Roundtrip".to_string(),
+        };
+        let bytes = serde_json::to_vec(&state).unwrap();
+        let original = ContractResultData {
+            final_state: ContractData(bytes),
+            success: true,
+            error: String::new(),
+        };
+
+        let serialized = serialize(&original).unwrap();
+        let recovered: ContractResultData = BorshDeserialize::try_from_slice(&serialized).unwrap();
+        assert!(recovered.success);
+        assert_eq!(recovered.error, "");
+        let recovered_state: TestState = serde_json::from_slice(&recovered.final_state.0).unwrap();
+        assert_eq!(recovered_state.value, 77);
+        assert_eq!(recovered_state.name, "Roundtrip");
+    }
+
+    #[test]
+    fn test_contract_init_check_data_roundtrip() {
+        let original = ContractInitCheckData {
+            success: false,
+            error: "validation error".to_string(),
+        };
+
+        let serialized = serialize(&original).unwrap();
+        let recovered: ContractInitCheckData = BorshDeserialize::try_from_slice(&serialized).unwrap();
+        assert!(!recovered.success);
+        assert_eq!(recovered.error, "validation error");
+    }
+
+    #[test]
+    fn test_execute_contract_event_rename() {
+        externf::reset();
+        let state = TestState {
+            value: 5,
+            name: "old_name".to_string(),
+        };
+        let state_ptr = setup_host_data(&state);
+
+        let event = TestEvent::Rename("new_name".to_string());
+        let event_ptr = setup_host_data(&event);
+
+        let result_ptr = execute_contract::<_, TestState, TestEvent>(
+            state_ptr,
+            state_ptr,
+            event_ptr,
+            0,
+            |context, result| {
+                if let TestEvent::Rename(name) = &context.event {
+                    result.state.name = name.clone();
+                    result.accept();
+                }
+            },
+        );
+
+        assert!(result_ptr != 0);
+        let result: ContractResultData = read_host_result(result_ptr);
+        assert!(result.success);
+        let final_state: TestState = serde_json::from_slice(&result.final_state.0).unwrap();
+        assert_eq!(final_state.name, "new_name");
+        assert_eq!(final_state.value, 5); // unchanged
+    }
+
+    #[test]
+    fn test_execute_contract_event_decrement() {
+        externf::reset();
+        let state = TestState {
+            value: 10,
+            name: "counter".to_string(),
+        };
+        let state_ptr = setup_host_data(&state);
+
+        let event = TestEvent::Decrement;
+        let event_ptr = setup_host_data(&event);
+
+        let result_ptr = execute_contract::<_, TestState, TestEvent>(
+            state_ptr,
+            state_ptr,
+            event_ptr,
+            1,
+            |context, result| {
+                if let TestEvent::Decrement = &context.event {
+                    result.state.value -= 1;
+                    result.accept();
+                }
+            },
+        );
+
+        assert!(result_ptr != 0);
+        let result: ContractResultData = read_host_result(result_ptr);
+        assert!(result.success);
+        let final_state: TestState = serde_json::from_slice(&result.final_state.0).unwrap();
+        assert_eq!(final_state.value, 9);
+    }
+
+    #[test]
+    fn test_check_init_data_with_validation() {
+        externf::reset();
+        let valid_state = TestState {
+            value: 50,
+            name: "valid".to_string(),
+        };
+        let valid_ptr = setup_host_data(&valid_state);
+
+        let result_ptr = check_init_data::<TestState, _>(valid_ptr, |state, check| {
+            if state.value > 100 {
+                check.reject("value too high");
+            } else {
+                check.accept();
+            }
+        });
+        let result: ContractInitCheckData = read_host_result(result_ptr);
+        assert!(result.success);
+
+        let invalid_state = TestState {
+            value: 150,
+            name: "invalid".to_string(),
+        };
+        let invalid_ptr = setup_host_data(&invalid_state);
+
+        let result_ptr = check_init_data::<TestState, _>(invalid_ptr, |state, check| {
+            if state.value > 100 {
+                check.reject("value too high");
+            } else {
+                check.accept();
+            }
+        });
+        let result: ContractInitCheckData = read_host_result(result_ptr);
+        assert!(!result.success);
+        assert!(result.error.contains("value too high"));
     }
 }

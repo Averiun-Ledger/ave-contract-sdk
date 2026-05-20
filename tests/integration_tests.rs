@@ -241,50 +241,75 @@ fn test_event_serialization_roundtrip() {
 }
 
 #[test]
-fn test_multiple_events_sequence() {
-    let mut state = CounterState {
+fn test_contract_event_sequence_with_result_context() {
+    let initial_state = CounterState {
         count: 0,
         owner: "henry".to_string(),
     };
 
-    // Event 1: Increment
-    let event1 = CounterEvent::Increment;
-    let _context1 = Context {
-        event: event1,
+    // Event 1: Increment (owner)
+    let context1 = Context {
+        event: CounterEvent::Increment,
         is_owner: true,
     };
-    state.count += 1;
-    assert_eq!(state.count, 1);
-
-    // Event 2: Increment again
-    let event2 = CounterEvent::Increment;
-    let _context2 = Context {
-        event: event2,
-        is_owner: false,
-    };
-    state.count += 1;
-    assert_eq!(state.count, 2);
-
-    // Event 3: SetCount
-    let event3 = CounterEvent::SetCount(50);
-    let context3 = Context {
-        event: event3,
-        is_owner: true,
-    };
-    match &context3.event {
-        CounterEvent::SetCount(val) => state.count = *val,
+    let mut result1 = ContractResult::new(initial_state);
+    match &context1.event {
+        CounterEvent::Increment => {
+            result1.state.count += 1;
+            result1.accept();
+        }
         _ => {}
     }
-    assert_eq!(state.count, 50);
+    assert_eq!(result1.state.count, 1);
+    assert!(result1.success);
 
-    // Event 4: Decrement
-    let event4 = CounterEvent::Decrement;
-    let _context4 = Context {
-        event: event4,
+    // Event 2: Increment again (non-owner)
+    let context2 = Context {
+        event: CounterEvent::Increment,
         is_owner: false,
     };
-    state.count -= 1;
-    assert_eq!(state.count, 49);
+    let mut result2 = ContractResult::new(result1.state);
+    match &context2.event {
+        CounterEvent::Increment => {
+            result2.state.count += 1;
+            result2.accept();
+        }
+        _ => {}
+    }
+    assert_eq!(result2.state.count, 2);
+    assert!(result2.success);
+
+    // Event 3: SetCount (owner)
+    let context3 = Context {
+        event: CounterEvent::SetCount(50),
+        is_owner: true,
+    };
+    let mut result3 = ContractResult::new(result2.state);
+    match &context3.event {
+        CounterEvent::SetCount(val) => {
+            result3.state.count = *val;
+            result3.accept();
+        }
+        _ => {}
+    }
+    assert_eq!(result3.state.count, 50);
+    assert!(result3.success);
+
+    // Event 4: Decrement (non-owner)
+    let context4 = Context {
+        event: CounterEvent::Decrement,
+        is_owner: false,
+    };
+    let mut result4 = ContractResult::new(result3.state);
+    match &context4.event {
+        CounterEvent::Decrement => {
+            result4.state.count -= 1;
+            result4.accept();
+        }
+        _ => {}
+    }
+    assert_eq!(result4.state.count, 49);
+    assert!(result4.success);
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

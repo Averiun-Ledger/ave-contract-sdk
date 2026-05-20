@@ -66,10 +66,13 @@ mod tests {
     }
 
     #[test]
-    fn test_error_debug_format() {
-        let error = Error::Serialization("test".to_string());
-        let debug_str = format!("{error:?}");
-        assert!(debug_str.contains("Serialization"));
-        assert!(debug_str.contains("test"));
+    fn test_error_as_dyn_error() {
+        let error: Box<dyn std::error::Error + Send + Sync> = Box::new(
+            Error::MemoryLimitExceeded { requested: 100, max: 50 }
+        );
+        let msg = error.to_string();
+        assert!(msg.contains("Memory limit exceeded"));
+        assert!(msg.contains("100"));
+        assert!(msg.contains("50"));
     }
 }
