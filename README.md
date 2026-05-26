@@ -14,7 +14,7 @@ Add the SDK to your contract crate:
 
 ```toml
 [dependencies]
-ave-contract-sdk = "0.7.1"
+ave-contract-sdk = "0.8.0"
 serde = { version = "1", features = ["derive"] }
 ```
 

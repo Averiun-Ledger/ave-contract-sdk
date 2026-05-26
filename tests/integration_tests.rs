@@ -32,12 +32,9 @@ fn test_contract_workflow_increment() {
     let mut result = ContractResult::new(initial_state);
 
     // Simulate contract logic
-    match &context.event {
-        CounterEvent::Increment => {
-            result.state.count += 1;
-            result.success = true;
-        }
-        _ => {}
+    if let CounterEvent::Increment = &context.event {
+        result.state.count += 1;
+        result.success = true;
     }
 
     assert_eq!(result.state.count, 1);
@@ -60,12 +57,9 @@ fn test_contract_workflow_decrement() {
 
     let mut result = ContractResult::new(initial_state);
 
-    match &context.event {
-        CounterEvent::Decrement => {
-            result.state.count -= 1;
-            result.success = true;
-        }
-        _ => {}
+    if let CounterEvent::Decrement = &context.event {
+        result.state.count -= 1;
+        result.success = true;
     }
 
     assert_eq!(result.state.count, 9);
@@ -87,17 +81,14 @@ fn test_contract_workflow_owner_only_operation() {
 
     let mut result = ContractResult::new(initial_state);
 
-    match &context.event {
-        CounterEvent::Reset => {
-            if context.is_owner {
-                result.state.count = 0;
-                result.success = true;
-            } else {
-                result.success = false;
-                result.error = "Only owner can reset".to_string();
-            }
+    if let CounterEvent::Reset = &context.event {
+        if context.is_owner {
+            result.state.count = 0;
+            result.success = true;
+        } else {
+            result.success = false;
+            result.error = "Only owner can reset".to_string();
         }
-        _ => {}
     }
 
     assert_eq!(result.state.count, 5); // State unchanged
@@ -120,17 +111,14 @@ fn test_contract_workflow_owner_reset() {
 
     let mut result = ContractResult::new(initial_state);
 
-    match &context.event {
-        CounterEvent::Reset => {
-            if context.is_owner {
-                result.state.count = 0;
-                result.success = true;
-            } else {
-                result.success = false;
-                result.error = "Only owner can reset".to_string();
-            }
+    if let CounterEvent::Reset = &context.event {
+        if context.is_owner {
+            result.state.count = 0;
+            result.success = true;
+        } else {
+            result.success = false;
+            result.error = "Only owner can reset".to_string();
         }
-        _ => {}
     }
 
     assert_eq!(result.state.count, 0);
@@ -253,12 +241,9 @@ fn test_contract_event_sequence_with_result_context() {
         is_owner: true,
     };
     let mut result1 = ContractResult::new(initial_state);
-    match &context1.event {
-        CounterEvent::Increment => {
-            result1.state.count += 1;
-            result1.accept();
-        }
-        _ => {}
+    if let CounterEvent::Increment = &context1.event {
+        result1.state.count += 1;
+        result1.accept();
     }
     assert_eq!(result1.state.count, 1);
     assert!(result1.success);
@@ -269,12 +254,9 @@ fn test_contract_event_sequence_with_result_context() {
         is_owner: false,
     };
     let mut result2 = ContractResult::new(result1.state);
-    match &context2.event {
-        CounterEvent::Increment => {
-            result2.state.count += 1;
-            result2.accept();
-        }
-        _ => {}
+    if let CounterEvent::Increment = &context2.event {
+        result2.state.count += 1;
+        result2.accept();
     }
     assert_eq!(result2.state.count, 2);
     assert!(result2.success);
@@ -285,12 +267,9 @@ fn test_contract_event_sequence_with_result_context() {
         is_owner: true,
     };
     let mut result3 = ContractResult::new(result2.state);
-    match &context3.event {
-        CounterEvent::SetCount(val) => {
-            result3.state.count = *val;
-            result3.accept();
-        }
-        _ => {}
+    if let CounterEvent::SetCount(val) = &context3.event {
+        result3.state.count = *val;
+        result3.accept();
     }
     assert_eq!(result3.state.count, 50);
     assert!(result3.success);
@@ -301,12 +280,9 @@ fn test_contract_event_sequence_with_result_context() {
         is_owner: false,
     };
     let mut result4 = ContractResult::new(result3.state);
-    match &context4.event {
-        CounterEvent::Decrement => {
-            result4.state.count -= 1;
-            result4.accept();
-        }
-        _ => {}
+    if let CounterEvent::Decrement = &context4.event {
+        result4.state.count -= 1;
+        result4.accept();
     }
     assert_eq!(result4.state.count, 49);
     assert!(result4.success);
