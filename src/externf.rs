@@ -88,11 +88,7 @@ mod test_impl {
         if let Some(forced) = FORCE_POINTER_LEN.with(|f| *f.borrow()) {
             return forced;
         }
-        HOST_MEMORY.with(|m| {
-            m.borrow()
-                .get(&pointer)
-                .map_or(0, |d| d.len() as i32)
-        })
+        HOST_MEMORY.with(|m| m.borrow().get(&pointer).map_or(0, |d| d.len() as i32))
     }
 
     /// Mock implementation of `alloc`.

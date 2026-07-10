@@ -16,8 +16,7 @@ fn setup_host_data<T: Serialize>(data: &T) -> i32 {
 
 /// Helper: reads Borsh-serialized data of type `T` from the mock host memory at `ptr`.
 fn read_host_result<T: BorshDeserialize>(ptr: u32) -> T {
-    let bytes =
-        externf::get_data(ptr as i32).expect("Result data not found in mock host memory");
+    let bytes = externf::get_data(ptr as i32).expect("Result data not found in mock host memory");
     T::try_from_slice(&bytes).expect("Failed to deserialize result from host memory")
 }
 
@@ -35,7 +34,6 @@ enum TestEvent {
     Rename(String),
 }
 
-
 #[test]
 fn test_contract_result_new() {
     let state = TestState {
@@ -47,11 +45,6 @@ fn test_contract_result_new() {
     assert!(!result.success);
     assert_eq!(result.error, "");
 }
-
-
-
-
-
 
 #[test]
 fn test_contract_result_data_error() {
@@ -93,19 +86,12 @@ fn test_serialize_deserialize_roundtrip() {
     assert_eq!(recovered_state.name, "test");
 }
 
-
-
 #[test]
 fn test_deserialize_invalid_data() {
     let invalid_bytes = vec![0xFF, 0xFF, 0xFF, 0xFF];
     let result = deserialize(&invalid_bytes);
     assert!(result.is_err());
 }
-
-
-
-
-
 
 #[test]
 fn test_contract_result_json_serialization() {
@@ -127,11 +113,6 @@ fn test_contract_result_json_serialization() {
     assert!(json_str.contains("JsonTest"));
     assert!(json_str.contains("true"));
 }
-
-
-
-
-
 
 #[test]
 fn test_contract_result_accept() {
@@ -631,7 +612,11 @@ fn test_is_owner_boundary_values() {
 
     // is_owner = 1 means owner
     let ptr1 = execute_contract::<_, TestState, TestEvent>(
-        state_ptr, state_ptr, event_ptr, 1, |_ctx, res| {
+        state_ptr,
+        state_ptr,
+        event_ptr,
+        1,
+        |_ctx, res| {
             if _ctx.is_owner {
                 res.state.value = 100;
                 res.accept();
@@ -648,7 +633,11 @@ fn test_is_owner_boundary_values() {
     // Any value other than 1 should be treated as non-owner
     for raw in [0, 2, -1, 99] {
         let ptr = execute_contract::<_, TestState, TestEvent>(
-            state_ptr, state_ptr, event_ptr, raw, |_ctx, res| {
+            state_ptr,
+            state_ptr,
+            event_ptr,
+            raw,
+            |_ctx, res| {
                 if _ctx.is_owner {
                     res.state.value = 100;
                     res.accept();

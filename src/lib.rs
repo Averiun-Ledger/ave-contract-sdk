@@ -1,5 +1,7 @@
 mod error;
 mod externf;
+#[cfg(feature = "runtime")]
+pub mod runtime;
 use ave_common::{ContractData, ContractInitCheckData, ContractResultData};
 use borsh::{BorshDeserialize, BorshSerialize};
 use error::Error;
