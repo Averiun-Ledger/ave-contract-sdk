@@ -12,7 +12,7 @@ use ave_common::{
     identity::{DigestIdentifier, HashAlgorithm, hash_borsh},
 };
 use borsh::{BorshDeserialize, to_vec};
-use wasmtime::{ExternType, Module, Store, Trap};
+use wasmtime::{ExternType, Linker, Module, Store, Trap};
 
 use crate::runtime::{
     InvalidModuleKind, ResolvedMachineSpec, RuntimeError, WasmLimits,
@@ -45,6 +45,7 @@ impl CompiledModule {
 pub struct ContractRuntime {
     engine: wasmtime::Engine,
     limits: WasmLimits,
+    linker: Linker<MemoryManager>,
     metrics: Option<Arc<ContractMetrics>>,
 }
 
@@ -56,9 +57,13 @@ impl ContractRuntime {
         });
         let engine = wasmtime::Engine::new(&create_secure_wasmtime_config(&limits))
             .map_err(|e| RuntimeError::EngineCreation(e.to_string()))?;
+        let linker = generate_linker(&engine).map_err(|e| {
+            RuntimeError::EngineCreation(format!("linker setup failed: {e}"))
+        })?;
         Ok(Self {
             engine,
             limits,
+            linker,
             metrics: None,
         })
     }
@@ -184,9 +189,8 @@ impl ContractRuntime {
             .set_fuel(MAX_FUEL_COMPILATION)
             .map_err(|e| RuntimeError::FuelLimitError(e.to_string()))?;
 
-        let linker = generate_linker(&self.engine)
-            .map_err(|e| RuntimeError::InstantiationFailed(e.to_string()))?;
-        let instance = linker
+        let instance = self
+            .linker
             .instantiate(&mut store, module.inner())
             .map_err(|e| RuntimeError::InstantiationFailed(e.to_string()))?;
 
@@ -251,9 +255,8 @@ impl ContractRuntime {
             .set_fuel(MAX_FUEL)
             .map_err(|e| RuntimeError::FuelLimitError(e.to_string()))?;
 
-        let linker = generate_linker(&self.engine)
-            .map_err(|e| RuntimeError::InstantiationFailed(e.to_string()))?;
-        let instance = linker
+        let instance = self
+            .linker
             .instantiate(&mut store, module.inner())
             .map_err(|e| RuntimeError::InstantiationFailed(e.to_string()))?;
 
