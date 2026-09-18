@@ -57,9 +57,8 @@ impl ContractRuntime {
         });
         let engine = wasmtime::Engine::new(&create_secure_wasmtime_config(&limits))
             .map_err(|e| RuntimeError::EngineCreation(e.to_string()))?;
-        let linker = generate_linker(&engine).map_err(|e| {
-            RuntimeError::EngineCreation(format!("linker setup failed: {e}"))
-        })?;
+        let linker = generate_linker(&engine)
+            .map_err(|e| RuntimeError::EngineCreation(format!("linker setup failed: {e}")))?;
         Ok(Self {
             engine,
             limits,
@@ -124,9 +123,8 @@ impl ContractRuntime {
         precompiled_bytes: &[u8],
     ) -> Result<CompiledModule, RuntimeError> {
         let module = unsafe {
-            Module::deserialize(&self.engine, precompiled_bytes).map_err(
-                |e| RuntimeError::DeserializationFailed(e.to_string()),
-            )?
+            Module::deserialize(&self.engine, precompiled_bytes)
+                .map_err(|e| RuntimeError::DeserializationFailed(e.to_string()))?
         };
 
         Ok(CompiledModule {

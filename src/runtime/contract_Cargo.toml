@@ -10,8 +10,11 @@ ave-contract-sdk = { path = "/home/ale/dev/ave-contract-sdk", version = "0.8.0" 
 # ave-contract-sdk = "0.8.0"
 
 [profile.release]
-strip = "debuginfo"
-lto = true
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
 
 [lib]
 crate-type = ["cdylib"]

@@ -2,4 +2,9 @@
 target-dir = "{target_dir}"
 
 [target.wasm32-unknown-unknown]
-rustflags = ["-C", "link-arg=--allow-undefined"]
+rustflags = [
+    "-C",
+    "link-arg=--allow-undefined",
+    "--remap-path-prefix={cargo_home}=/cargo-home",
+    "--remap-path-prefix={rust_src}=/rustc/{rustc_commit}",
+]
