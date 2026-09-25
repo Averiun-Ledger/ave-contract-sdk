@@ -11,6 +11,22 @@ use serde::{Deserialize, Serialize};
 /// Prevents excessive allocations from malformed or malicious host input.
 const MAX_DATA_SIZE: i32 = 10_000_000; // 10MB
 
+/// Ownership flag value sent by the runtime in `is_owner`.
+///
+/// Contracts and hosts must use this constant instead of hardcoding `1` so
+/// both sides of the ABI stay in sync.
+pub const OWNER_FLAG: i32 = 1;
+
+// Error message protocol shared with the host. These strings travel inside
+// `ContractResultData.error` / `ContractInitCheckData.error` and may be
+// displayed (or matched) by the host, so they are constants rather than
+// inline literals.
+const ERR_INIT_REJECTED: &str = "Error running init contract data";
+const ERR_EVENT_REJECTED: &str = "Error running contract event";
+const ERR_FINAL_STATE_SER: &str = "Cannot serialize contract final state into JSON bytes";
+const ERR_RETURN_INIT_RESULT: &str = "Cannot return init contract result";
+const ERR_RETURN_RESULT: &str = "Cannot return contract result";
+
 /// Contract execution context.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Context<Event> {
@@ -107,7 +123,7 @@ impl ContractInitCheck {
 /// ```
 pub fn check_init_data<State, F>(state_ptr: i32, callback: F) -> u32
 where
-    State: for<'a> Deserialize<'a> + Serialize + Clone,
+    State: for<'a> Deserialize<'a> + Serialize,
     F: Fn(&State, &mut ContractInitCheck),
 {
     match try_check_init_data(state_ptr, callback) {
@@ -118,7 +134,7 @@ where
 
 fn try_check_init_data<State, F>(state_ptr: i32, callback: F) -> Result<u32, String>
 where
-    State: for<'a> Deserialize<'a> + Serialize + Clone,
+    State: for<'a> Deserialize<'a> + Serialize,
     F: Fn(&State, &mut ContractInitCheck),
 {
     let state = read_and_parse::<State>(state_ptr, "State")?;
@@ -126,13 +142,10 @@ where
     callback(&state, &mut contract_result);
 
     if !contract_result.success {
-        return Err(format!(
-            "Error running init contract data: {}",
-            contract_result.error
-        ));
+        return Err(format!("{}: {}", ERR_INIT_REJECTED, contract_result.error));
     }
 
-    store(&ContractInitCheckData::ok()).map_err(|_| "Cannot return init contract result".to_owned())
+    store(&ContractInitCheckData::ok()).map_err(|_| ERR_RETURN_INIT_RESULT.to_owned())
 }
 
 /// Executes a contract by processing an event and updating the subject's state.
@@ -195,7 +208,7 @@ pub fn execute_contract<F, State, Event>(
     callback: F,
 ) -> u32
 where
-    State: for<'a> Deserialize<'a> + Serialize + Clone,
+    State: for<'a> Deserialize<'a> + Serialize,
     Event: for<'a> Deserialize<'a> + Serialize,
     F: Fn(&Context<Event>, &mut ContractResult<State>),
 {
@@ -213,31 +226,32 @@ fn try_execute_contract<F, State, Event>(
     callback: F,
 ) -> Result<u32, String>
 where
-    State: for<'a> Deserialize<'a> + Serialize + Clone,
+    State: for<'a> Deserialize<'a> + Serialize,
     Event: for<'a> Deserialize<'a> + Serialize,
     F: Fn(&Context<Event>, &mut ContractResult<State>),
 {
     let state = match read_and_parse::<State>(state_ptr, "State") {
         Ok(state) => state,
-        Err(_) => read_and_parse::<State>(init_state_ptr, "Init State")?,
+        Err(first) => read_and_parse::<State>(init_state_ptr, "Init State")
+            .map_err(|second| format!("{first}; fallback to init state also failed: {second}"))?,
     };
     let event = read_and_parse::<Event>(event_ptr, "Event")?;
-    let is_owner = is_owner == 1;
+    let is_owner = is_owner == OWNER_FLAG;
     let context = Context { event, is_owner };
     let mut contract_result = ContractResult::new(state);
     callback(&context, &mut contract_result);
-    let state_bytes = serde_json::to_vec(&contract_result.state)
-        .map_err(|_| "Cannot serialize contract final state into JSON bytes".to_owned())?;
+    let state_bytes =
+        serde_json::to_vec(&contract_result.state).map_err(|_| ERR_FINAL_STATE_SER.to_owned())?;
     let result = ContractResultData {
         final_state: ContractData(state_bytes),
         success: contract_result.success,
         error: if contract_result.success {
             String::new()
         } else {
-            format!("Error running contract event: {}", contract_result.error)
+            format!("{}: {}", ERR_EVENT_REJECTED, contract_result.error)
         },
     };
-    store(&result).map_err(|_| "Cannot return contract result".to_owned())
+    store(&result).map_err(|_| ERR_RETURN_RESULT.to_owned())
 }
 
 /// Deserializes data from bytes using Borsh format.
@@ -294,7 +308,7 @@ fn read_host_bytes(pointer: i32, data: &mut Vec<u8>, len: usize) {
 }
 
 #[cfg(test)]
-fn read_host_bytes(pointer: i32, data: &mut Vec<u8>, _len: usize) {
+fn read_host_bytes(pointer: i32, data: &mut [u8], _len: usize) {
     externf::read_bytes_into_vec(pointer, data);
 }
 
@@ -304,7 +318,9 @@ fn read_host_bytes(pointer: i32, data: &mut Vec<u8>, _len: usize) {
 #[allow(unused_unsafe)]
 fn get_from_context(pointer: i32) -> Result<Vec<u8>, Error> {
     let len = validate_host_len(unsafe { externf::pointer_len(pointer) })?;
-    let mut data = Vec::with_capacity(len);
+    // Zeroed buffer: if the host writes fewer bytes than `len`, the remainder
+    // is deterministically zero instead of uninitialized memory.
+    let mut data = vec![0u8; len];
     read_host_bytes(pointer, &mut data, len);
     Ok(data)
 }
@@ -346,9 +362,8 @@ where
 
     let raw_ptr = unsafe { externf::alloc(len) };
     if raw_ptr == 0 {
-        return Err(Error::MemoryLimitExceeded {
+        return Err(Error::HostAllocationFailed {
             requested: bytes.len(),
-            max: MAX_DATA_SIZE as usize,
         });
     }
     let ptr = raw_ptr as u32;

@@ -12,7 +12,7 @@ use ave_common::{
     identity::{DigestIdentifier, HashAlgorithm, hash_borsh},
 };
 use borsh::{BorshDeserialize, to_vec};
-use wasmtime::{ExternType, Linker, Module, Store, Trap};
+use wasmtime::{ExternType, FuncType, Linker, Module, Store, Trap, ValType};
 
 use crate::runtime::{
     InvalidModuleKind, ResolvedMachineSpec, RuntimeError, WasmLimits,
@@ -152,8 +152,26 @@ impl ContractRuntime {
         let mut pending_sdk: HashSet<&str> = SDK_FUNCTIONS.iter().copied().collect();
 
         for import in imports {
+            if import.module() != "env" {
+                return Err(RuntimeError::InvalidModule(
+                    InvalidModuleKind::UnexpectedImportModule {
+                        module: import.module().to_string(),
+                        name: import.name().to_string(),
+                    },
+                ));
+            }
             match import.ty() {
-                ExternType::Func(_) => {
+                ExternType::Func(func_ty) => {
+                    if let Some(expected) = expected_sdk_signature(import.name())
+                        && !signature_matches(&func_ty, expected)
+                    {
+                        return Err(RuntimeError::InvalidModule(
+                            InvalidModuleKind::InvalidImportSignature {
+                                name: import.name().to_string(),
+                                expected: expected.2.to_string(),
+                            },
+                        ));
+                    }
                     if !pending_sdk.remove(import.name()) {
                         return Err(RuntimeError::InvalidModule(
                             InvalidModuleKind::UnknownImportFunction {
@@ -334,6 +352,38 @@ impl ContractRuntime {
             }
         })
     }
+}
+
+/// Expected WASM-level signature of each SDK host function.
+///
+/// Compares at `ValKind` level, where `i32`/`u32` are the same type, so the
+/// host closures (typed with `u32`) and the guest declarations (typed with
+/// `i32`) both match.
+fn expected_sdk_signature(
+    name: &str,
+) -> Option<(&'static [ValType], &'static [ValType], &'static str)> {
+    use ValType::I32;
+    match name {
+        "pointer_len" | "alloc" => Some((&[I32], &[I32], "(param i32) (result i32)")),
+        "read_bytes" | "write_bytes" => Some((&[I32, I32, I32], &[], "(param i32 i32 i32)")),
+        _ => None,
+    }
+}
+
+fn valtype_eq(a: &ValType, b: &ValType) -> bool {
+    use ValType::*;
+    matches!(
+        (a, b),
+        (I32, I32) | (I64, I64) | (F32, F32) | (F64, F64) | (V128, V128)
+    ) || matches!((a, b), (Ref(_), Ref(_)))
+}
+
+fn valtypes_eq(a: impl ExactSizeIterator<Item = ValType>, b: &[ValType]) -> bool {
+    a.len() == b.len() && a.zip(b.iter()).all(|(x, y)| valtype_eq(&x, y))
+}
+
+fn signature_matches(actual: &FuncType, expected: (&[ValType], &[ValType], &str)) -> bool {
+    valtypes_eq(actual.params(), expected.0) && valtypes_eq(actual.results(), expected.1)
 }
 
 fn value_to_contract_data(value: &ValueWrapper) -> Result<ContractData, RuntimeError> {

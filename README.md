@@ -25,7 +25,7 @@ Contracts that are compiled for the Ave runtime should expose a `cdylib` artifac
 crate-type = ["cdylib"]
 ```
 
-This crate currently requires Rust `1.91.0` or newer and uses the Rust 2024 edition.
+This crate currently requires Rust `1.95.0` or newer and uses the Rust 2024 edition.
 
 ## Contract Interface
 
@@ -74,12 +74,11 @@ pub unsafe fn main_function(
 
 fn init_logic(state: &State, result: &mut sdk::ContractInitCheck) {
     if state.value.is_empty() {
-        result.success = false;
-        result.error = "initial value cannot be empty".to_owned();
+        result.reject("initial value cannot be empty");
         return;
     }
 
-    result.success = true;
+    result.accept();
 }
 
 fn contract_logic(
@@ -89,7 +88,7 @@ fn contract_logic(
     match &context.event {
         Event::SetValue { value } => {
             result.state.value = value.clone();
-            result.success = true;
+            result.accept();
         }
     }
 }
@@ -108,7 +107,7 @@ cargo build --release --target wasm32-unknown-unknown
 ```rust
 pub fn check_init_data<State, F>(state_ptr: i32, callback: F) -> u32
 where
-    State: for<'a> serde::Deserialize<'a> + serde::Serialize + Clone,
+    State: for<'a> serde::Deserialize<'a> + serde::Serialize,
     F: Fn(&State, &mut ContractInitCheck),
 ```
 
@@ -125,14 +124,19 @@ pub fn execute_contract<F, State, Event>(
     callback: F,
 ) -> u32
 where
-    State: for<'a> serde::Deserialize<'a> + serde::Serialize + Clone,
+    State: for<'a> serde::Deserialize<'a> + serde::Serialize,
     Event: for<'a> serde::Deserialize<'a> + serde::Serialize,
     F: Fn(&Context<Event>, &mut ContractResult<State>),
 ```
 
-Executes one event against the current state. If the current state cannot be converted into the contract state type, the SDK attempts to recover from `init_state_ptr`. The callback receives a `Context<Event>` and a mutable `ContractResult<State>`.
+Executes one event against the current state. If the current state cannot be converted into the contract state type, the SDK attempts to recover from `init_state_ptr`. If both fail, the returned error chains both causes. The callback receives a `Context<Event>` and a mutable `ContractResult<State>`.
 
 Set `result.success = true` when the event should be accepted. Leave it as `false`, or set it explicitly to `false`, and fill `result.error` when the event should be rejected.
+
+Two ABI notes:
+
+- `is_owner` follows the `sdk::OWNER_FLAG` protocol: `1` means owner, any other value means non-owner. Compare against the constant, don't hardcode `1`.
+- Both entry points return a `u32` pointer to the serialized result. A return value of `0` means the host could not even allocate memory for the error result (double fault); the host must treat it as fatal.
 
 ## Core Types
 
@@ -173,6 +177,44 @@ Run their tests from the repository root:
 cargo test --manifest-path example/Cargo.toml
 cargo test --manifest-path example2/Cargo.toml
 ```
+
+## Host runtime (`runtime` feature)
+
+The SDK also ships the wasmtime-backed executor used by Ave Ledger nodes.
+It is gated behind the `runtime` feature (which pulls in `wasmtime` and
+`prometheus-client`):
+
+```toml
+[dependencies]
+ave-contract-sdk = { version = "0.8.0", features = ["runtime"] }
+```
+
+```rust
+use ave_contract_sdk::runtime::{ContractRuntime, ResolvedMachineSpec};
+
+// Derive limits from the machine (or pass `None` for defaults).
+let runtime = ContractRuntime::new(Some(ResolvedMachineSpec {
+    ram_mb: 4096,
+    cpu_cores: 4,
+}))?;
+
+// Precompile once, reuse many times.
+let module = runtime.compile(&wasm_bytes)?;
+// `validate` checks the `env` imports and entry points, then runs
+// `init_check_function` against the proposed initial state.
+runtime.validate(&module, &initial_state)?;
+// `execute` runs `main_function` under fuel (`MAX_FUEL`) and memory limits.
+let (result, stats) = runtime.execute(&module, &state, &init_state, &event, is_owner)?;
+```
+
+Key items:
+
+- `WasmLimits::build(ram_mb, cpu_cores)` derives stack/memory/table caps.
+- `CompiledModule::precompiled_bytes()` exposes the engine artifact for caching; `load_precompiled` reloads it (bytes must come from a compatible engine).
+- `ContractRuntime::engine_fingerprint` identifies the engine for cache invalidation.
+- `ContractMetrics` (with the `prometheus` feature) records executions, fuel and memory peaks.
+- `CONTRACT_CARGO_TOML` / `CONTRACT_CARGO_CONFIG` are the embedded templates used to build contract crates.
+- Host errors from guest calls surface through wasmtime's error chain (`format!("{err:#}")`); plain `to_string()` only shows the trap backtrace.
 
 ## Development
 

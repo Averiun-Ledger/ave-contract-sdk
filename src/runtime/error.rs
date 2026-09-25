@@ -17,6 +17,11 @@ pub enum ContractError {
     #[error("write out of bounds: offset {offset} >= allocation size {size}")]
     WriteOutOfBounds { offset: usize, size: usize },
 
+    /// A guest-provided byte length is negative or otherwise unusable.
+    /// Checked *before* any allocation so malicious guests cannot OOM the host.
+    #[error("invalid length: {len}")]
+    InvalidLength { len: i32 },
+
     /// A single allocation exceeds the per-allocation limit.
     #[error("allocation size {size} exceeds maximum of {max} bytes")]
     AllocationTooLarge { size: usize, max: usize },
@@ -93,6 +98,11 @@ pub enum InvalidModuleKind {
     NonFunctionImport { import_type: String },
     /// The module is missing one or more required SDK imports.
     MissingImports { missing: Vec<String> },
+    /// The module imports a known SDK function from the wrong module.
+    /// SDK functions must be imported from `"env"`.
+    UnexpectedImportModule { module: String, name: String },
+    /// The module imports a known SDK function with the wrong signature.
+    InvalidImportSignature { name: String, expected: String },
 }
 
 impl std::fmt::Display for InvalidModuleKind {
@@ -111,6 +121,16 @@ impl std::fmt::Display for InvalidModuleKind {
             Self::MissingImports { missing } => {
                 write!(f, "module is missing SDK imports: {}", missing.join(", "))
             }
+            Self::UnexpectedImportModule { module, name } => write!(
+                f,
+                "module imports '{}' from '{}', expected module 'env'",
+                name, module
+            ),
+            Self::InvalidImportSignature { name, expected } => write!(
+                f,
+                "module imports '{}' with an invalid signature, expected {}",
+                name, expected
+            ),
         }
     }
 }

@@ -71,10 +71,13 @@ impl MemoryManager {
             .get(&ptr)
             .copied()
             .ok_or(ContractError::InvalidPointer { pointer: ptr })?;
-        if ptr + len > self.memory.len() {
+        let end = ptr
+            .checked_add(len)
+            .ok_or(ContractError::InvalidPointer { pointer: ptr })?;
+        if end > self.memory.len() {
             return Err(ContractError::InvalidPointer { pointer: ptr });
         }
-        Ok(&self.memory[ptr..ptr + len])
+        Ok(&self.memory[ptr..end])
     }
 
     /// Returns `len` bytes starting at `ptr` if the range is in bounds.
@@ -90,7 +93,8 @@ impl MemoryManager {
 
     /// Copies `data` into the allocation at `ptr`.
     ///
-    /// Fails if `ptr` is unknown or if `data` is larger than the allocation.
+    /// Fails if `ptr` is unknown, if `data` is larger than the allocation,
+    /// or if the write range is out of bounds of the backing store.
     pub fn write_bytes(&mut self, ptr: usize, data: &[u8]) -> Result<(), ContractError> {
         let len = self
             .map
@@ -103,7 +107,13 @@ impl MemoryManager {
                 size: len,
             });
         }
-        self.memory[ptr..ptr + data.len()].copy_from_slice(data);
+        let end = ptr
+            .checked_add(data.len())
+            .ok_or(ContractError::InvalidPointer { pointer: ptr })?;
+        if end > self.memory.len() {
+            return Err(ContractError::InvalidPointer { pointer: ptr });
+        }
+        self.memory[ptr..end].copy_from_slice(data);
         Ok(())
     }
 
@@ -124,6 +134,25 @@ impl Default for MemoryManager {
     fn default() -> Self {
         Self::from_limits(&WasmLimits::default())
     }
+}
+
+/// Validates a guest-provided byte length *before* any allocation happens.
+///
+/// Rejects negative values and values above the per-allocation cap so a
+/// malicious guest cannot force the host into a huge allocation (e.g.
+/// `len = -1` would otherwise become `usize::MAX` via `as` casting).
+pub(crate) fn checked_guest_len(len: i32, max_single_alloc: usize) -> Result<usize, ContractError> {
+    if len < 0 {
+        return Err(ContractError::InvalidLength { len });
+    }
+    let len = len as usize;
+    if len > max_single_alloc {
+        return Err(ContractError::AllocationTooLarge {
+            size: len,
+            max: max_single_alloc,
+        });
+    }
+    Ok(len)
 }
 
 /// Builds a `Linker` exposing the SDK `env` imports (`pointer_len`, `alloc`, `read_bytes`, `write_bytes`) backed by a `MemoryManager`.
@@ -169,9 +198,10 @@ pub fn generate_linker(engine: &wasmtime::Engine) -> Result<Linker<MemoryManager
              dst_ptr: i32,
              len: i32|
              -> Result<(), WasmError> {
+                let len = checked_guest_len(len, caller.data().max_single_alloc)?;
                 let bytes = caller
                     .data()
-                    .read_bytes(src_ptr as usize, len as usize)
+                    .read_bytes(src_ptr as usize, len)
                     .map_err(WasmError::from)?
                     .to_vec();
                 let memory = caller
@@ -201,6 +231,7 @@ pub fn generate_linker(engine: &wasmtime::Engine) -> Result<Linker<MemoryManager
              src_ptr: i32,
              len: i32|
              -> Result<(), WasmError> {
+                let len = checked_guest_len(len, caller.data().max_single_alloc)?;
                 let memory = caller
                     .get_export("memory")
                     .and_then(|e| e.into_memory())
@@ -208,7 +239,7 @@ pub fn generate_linker(engine: &wasmtime::Engine) -> Result<Linker<MemoryManager
                         function: "write_bytes",
                         details: "memory export not found".to_string(),
                     })?;
-                let mut buf = vec![0u8; len as usize];
+                let mut buf = vec![0u8; len];
                 memory
                     .read(&caller, src_ptr as usize, &mut buf)
                     .map_err(WasmError::from)?;

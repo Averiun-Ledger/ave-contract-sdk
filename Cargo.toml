@@ -31,3 +31,6 @@ prometheus-client = { version = "0.25.0", optional = true }
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+
+[dev-dependencies]
+wat = "1"

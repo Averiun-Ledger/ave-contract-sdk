@@ -17,6 +17,14 @@ pub enum Error {
     #[error("Memory limit exceeded: requested {requested} bytes, maximum allowed is {max} bytes")]
     MemoryLimitExceeded { requested: usize, max: usize },
 
+    /// The host allocator returned a null pointer.
+    ///
+    /// Unlike `MemoryLimitExceeded`, this means the host could not satisfy the
+    /// allocation for any reason (OOM, fragmentation, transient failure), not
+    /// necessarily that a configured limit was hit.
+    #[error("Host allocation failed: could not allocate {requested} bytes")]
+    HostAllocationFailed { requested: usize },
+
     /// Integer conversion or pointer arithmetic overflow.
     #[error("Integer overflow: {0}")]
     IntegerOverflow(String),
@@ -47,6 +55,15 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "Memory limit exceeded: requested 20000000 bytes, maximum allowed is 10000000 bytes"
+        );
+    }
+
+    #[test]
+    fn test_host_allocation_failed_error_display() {
+        let error = Error::HostAllocationFailed { requested: 4096 };
+        assert_eq!(
+            error.to_string(),
+            "Host allocation failed: could not allocate 4096 bytes"
         );
     }
 

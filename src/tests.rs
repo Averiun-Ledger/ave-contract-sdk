@@ -185,6 +185,17 @@ fn test_get_from_context_oversized() {
 }
 
 #[test]
+fn test_get_from_context_exactly_at_limit() {
+    externf::reset();
+    let at_limit = vec![7u8; MAX_DATA_SIZE as usize];
+    let ptr = externf::store_data(at_limit.clone());
+
+    let result = get_from_context(ptr);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), at_limit);
+}
+
+#[test]
 fn test_get_from_context_negative_len() {
     externf::reset();
     externf::set_force_pointer_len(-1);
@@ -228,8 +239,8 @@ fn test_store_alloc_fails() {
     let result = store(&data);
     assert!(result.is_err());
     match result.unwrap_err() {
-        Error::MemoryLimitExceeded { .. } => {}
-        other => panic!("Expected MemoryLimitExceeded, got {:?}", other),
+        Error::HostAllocationFailed { .. } => {}
+        other => panic!("Expected HostAllocationFailed, got {:?}", other),
     }
 }
 
@@ -449,7 +460,65 @@ fn test_execute_contract_invalid_both_states() {
     assert!(result_ptr != 0);
     let result: ContractResultData = read_host_result(result_ptr);
     assert!(!result.success);
+    // Both failures are reported: the current-state error and the init-state one.
+    assert!(result.error.contains("Cannot deserialize State"));
     assert!(result.error.contains("Cannot deserialize Init State"));
+}
+
+/// State without `Clone`: the SDK must not require `State: Clone`.
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+struct NoCloneState {
+    value: i32,
+}
+
+#[test]
+fn test_check_init_data_without_clone_state() {
+    externf::reset();
+    let state = NoCloneState { value: 7 };
+    let ptr = setup_host_data(&state);
+
+    let result_ptr = check_init_data::<NoCloneState, _>(ptr, |state, check| {
+        if state.value == 7 {
+            check.accept();
+        } else {
+            check.reject("unexpected");
+        }
+    });
+
+    assert!(result_ptr != 0);
+    let result: ContractInitCheckData = read_host_result(result_ptr);
+    assert!(result.success);
+}
+
+#[test]
+fn test_execute_contract_without_clone_state() {
+    externf::reset();
+    let state = NoCloneState { value: 1 };
+    let state_ptr = setup_host_data(&state);
+    let event = TestEvent::Increment;
+    let event_ptr = setup_host_data(&event);
+
+    let result_ptr = execute_contract::<_, NoCloneState, TestEvent>(
+        state_ptr,
+        state_ptr,
+        event_ptr,
+        1,
+        |_context, result| {
+            result.state.value += 1;
+            result.accept();
+        },
+    );
+
+    assert!(result_ptr != 0);
+    let result: ContractResultData = read_host_result(result_ptr);
+    assert!(result.success);
+    let final_state: NoCloneState = serde_json::from_slice(&result.final_state.0).unwrap();
+    assert_eq!(final_state.value, 2);
+}
+
+#[test]
+fn test_owner_flag_const_matches_runtime_protocol() {
+    assert_eq!(super::OWNER_FLAG, 1);
 }
 
 #[test]

@@ -109,12 +109,13 @@ mod test_impl {
     }
 
     /// Mock implementation of `write_bytes`.
-    /// Safe test helper: copies the full content stored at `src_ptr` into `dst`.
-    pub fn read_bytes_into_vec(src_ptr: i32, dst: &mut Vec<u8>) {
+    /// Safe test helper: overwrites the pre-sized `dst` buffer with the content
+    /// stored at `src_ptr` (mirrors the in-place host write of the real ABI).
+    pub fn read_bytes_into_vec(src_ptr: i32, dst: &mut [u8]) {
         let data = HOST_MEMORY
             .with(|m| m.borrow().get(&src_ptr).cloned())
             .unwrap_or_default();
-        dst.extend_from_slice(&data);
+        dst[..data.len()].copy_from_slice(&data);
     }
 
     /// Safe test helper: stores `src` into mock host memory at `dst_ptr`.
