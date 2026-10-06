@@ -6,7 +6,7 @@
 //! that the mocked unit tests cannot see.
 
 use ave_common::ValueWrapper;
-use ave_contract_sdk::runtime::ContractRuntime;
+use ave_contract_sdk::runtime::{ContractRuntime, ResolvedMachineSpec};
 
 /// Escapes raw bytes as WAT `\\xx` hex escapes for use in a data segment.
 fn wat_escape(bytes: &[u8]) -> String {
@@ -59,7 +59,7 @@ fn build_guest_wat(result_bytes: &[u8], init_bytes: &[u8]) -> String {
 fn compile_guest(
     runtime: &ContractRuntime,
     final_state_json: serde_json::Value,
-) -> ave_contract_sdk::runtime::CompiledModule {
+) -> (ave_contract_sdk::runtime::CompiledModule, Vec<u8>) {
     use ave_common::{ContractData, ContractInitCheckData, ContractResultData};
 
     let result = ContractResultData {
@@ -77,7 +77,7 @@ fn compile_guest(
 fn e2e_compile_validate_execute_roundtrip() {
     let runtime = ContractRuntime::new(None).unwrap();
     let expected_state = serde_json::json!({"value": 99});
-    let module = compile_guest(&runtime, expected_state.clone());
+    let (module, _) = compile_guest(&runtime, expected_state.clone());
 
     let initial = ValueWrapper(serde_json::json!({"value": 1}));
     runtime
@@ -94,6 +94,51 @@ fn e2e_compile_validate_execute_roundtrip() {
     assert_eq!(result.error, "");
     assert_eq!(result.final_state.0, expected_state);
     assert!(!stats.fuel_exhausted);
+}
+
+#[test]
+fn e2e_codegen_identical_across_machine_specs() {
+    // A float-heavy guest: NaN payloads are exactly where per-machine
+    // codegen used to diverge (opt level by core count, no
+    // canonicalization). Same wasm must precompile to identical bytes
+    // on a small box and a big one — that is the whole determinism
+    // guarantee, in one assertion.
+    let wasm = wat::parse_str(
+        r#"(module
+  (func (export "nan") (result f64)
+    (f64.div (f64.const 0) (f64.const 0)))
+  (func (export "add") (param f64 f64) (result f64)
+    (f64.add (local.get 0) (local.get 1)))
+)"#,
+    )
+    .unwrap();
+    let small = ContractRuntime::new(Some(ResolvedMachineSpec {
+        ram_mb: 1024,
+        cpu_cores: 2,
+    }))
+    .unwrap();
+    let big = ContractRuntime::new(Some(ResolvedMachineSpec {
+        ram_mb: 32768,
+        cpu_cores: 16,
+    }))
+    .unwrap();
+    let (_, small_bytes) = small.compile(&wasm).expect("small compiles");
+    let (_, big_bytes) = big.compile(&wasm).expect("big compiles");
+    assert_eq!(
+        small_bytes, big_bytes,
+        "same wasm must codegen identically on every machine"
+    );
+    // Sensitivity: the pre-fix setup (opt level by core count, no NaN
+    // canonicalization) must NOT produce these bytes — otherwise this
+    // test could not have caught the bug.
+    let mut divergent = wasmtime::Config::default();
+    divergent.cranelift_opt_level(wasmtime::OptLevel::SpeedAndSize);
+    let divergent_engine = wasmtime::Engine::new(&divergent).unwrap();
+    let divergent_bytes = divergent_engine.precompile_module(&wasm).unwrap();
+    assert_ne!(
+        small_bytes, divergent_bytes,
+        "the old per-machine codegen must differ, or this test is blind"
+    );
 }
 
 #[test]
@@ -141,8 +186,7 @@ fn e2e_host_write_bytes_rejects_negative_len() {
 fn e2e_load_precompiled_roundtrip() {
     let runtime = ContractRuntime::new(None).unwrap();
     let expected_state = serde_json::json!({"value": 7});
-    let module = compile_guest(&runtime, expected_state.clone());
-    let bytes = module.precompiled_bytes().to_vec();
+    let (_module, bytes) = compile_guest(&runtime, expected_state.clone());
 
     let reloaded = runtime
         .load_precompiled(&bytes)
@@ -199,7 +243,7 @@ fn validate_wat(runtime: &ContractRuntime, imports: &str) -> Result<(), String> 
     (i32.const 0)))"#
     ))
     .unwrap();
-    let module = runtime.compile(&wasm).expect("test module must compile");
+    let (module, _) = runtime.compile(&wasm).expect("test module must compile");
     let state = ValueWrapper(serde_json::json!({"v": 1}));
     runtime.validate(&module, &state).map_err(|e| e.to_string())
 }

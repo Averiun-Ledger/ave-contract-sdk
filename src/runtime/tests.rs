@@ -146,6 +146,52 @@ fn invalid_module_kind_display_wrong_module_and_signature() {
 }
 
 #[test]
+fn declared_min_memory_parses_memory_section() {
+    use crate::runtime::config::{WASM_PAGE_BYTES, declared_min_memory_bytes};
+    // (module (memory 600)): magic, version, section 5, len 4,
+    // count 1, flags 0, min 600 pages (0xD8 0x04 uleb).
+    let wasm = vec![
+        0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00, 0x05, 0x04, 0x01, 0x00, 0xD8, 0x04,
+    ];
+    assert_eq!(
+        declared_min_memory_bytes(&wasm),
+        Some(600 * WASM_PAGE_BYTES)
+    );
+    // No memory section: zero pages, not an error.
+    let bare = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+    assert_eq!(declared_min_memory_bytes(&bare), Some(0));
+    // Truncated section: unparseable (never a silent zero — the
+    // precompiler rejects it downstream all the same).
+    let cut = vec![
+        0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00, 0x05, 0x04, 0x01,
+    ];
+    assert_eq!(declared_min_memory_bytes(&cut), None);
+}
+
+#[test]
+fn compile_rejects_oversized_minimum_memory() {
+    use crate::runtime::config::MAX_MEMORY_BYTES;
+    // 600 pages (~39 MiB) exceed the 32 MiB instantiable on any node:
+    // deterministic fleet-wide, so compile refuses with a verdict
+    // instead of anchoring bytes every evaluator answers Unavailable.
+    let wasm = wat::parse_str("(module (memory 600))").unwrap();
+    let runtime = ContractRuntime::new(None).unwrap();
+    match runtime.compile(&wasm) {
+        Err(RuntimeError::InvalidModule(InvalidModuleKind::ExcessiveMemory {
+            min_bytes,
+            max_bytes,
+        })) => {
+            assert_eq!(min_bytes, 600 * 65_536);
+            assert_eq!(max_bytes, MAX_MEMORY_BYTES);
+        }
+        other => panic!("expected ExcessiveMemory, got {:?}", other.is_ok()),
+    }
+    // A sane minimum still compiles.
+    let ok = wat::parse_str("(module (memory 1))").unwrap();
+    assert!(runtime.compile(&ok).is_ok());
+}
+
+#[test]
 fn checked_guest_len_accepts_zero_and_normal_values() {
     use crate::runtime::host::checked_guest_len;
     assert_eq!(checked_guest_len(0, 1024).unwrap(), 0);

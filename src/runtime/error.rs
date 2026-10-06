@@ -69,6 +69,12 @@ pub enum RuntimeError {
     #[error("contract execution failed: {0}")]
     ContractExecutionFailed(String),
 
+    /// The contract exhausted its fuel budget. Deterministic (same
+    /// budget on every node): callers should return a verdict, not
+    /// treat the node as broken.
+    #[error("contract ran out of fuel after consuming {consumed} units")]
+    OutOfFuel { consumed: u64 },
+
     /// The store fuel could not be configured.
     #[error("fuel limit error: {0}")]
     FuelLimitError(String),
@@ -83,10 +89,7 @@ pub enum RuntimeError {
 
     /// (De)serialization of contract data failed.
     #[error("serialization error [{context}]: {details}")]
-    SerializationError {
-        context: &'static str,
-        details: String,
-    },
+    SerializationError { context: String, details: String },
 }
 
 /// Reason a module failed SDK import validation.
@@ -103,6 +106,10 @@ pub enum InvalidModuleKind {
     UnexpectedImportModule { module: String, name: String },
     /// The module imports a known SDK function with the wrong signature.
     InvalidImportSignature { name: String, expected: String },
+    /// The module declares more minimum linear memory than any compliant
+    /// node can instantiate (`MAX_MEMORY_BYTES`): the failure is
+    /// deterministic fleet-wide.
+    ExcessiveMemory { min_bytes: u64, max_bytes: usize },
 }
 
 impl std::fmt::Display for InvalidModuleKind {
@@ -130,6 +137,14 @@ impl std::fmt::Display for InvalidModuleKind {
                 f,
                 "module imports '{}' with an invalid signature, expected {}",
                 name, expected
+            ),
+            Self::ExcessiveMemory {
+                min_bytes,
+                max_bytes,
+            } => write!(
+                f,
+                "module requires {} minimum memory bytes, above the {} instantiable on any node",
+                min_bytes, max_bytes
             ),
         }
     }

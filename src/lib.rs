@@ -36,6 +36,33 @@ pub struct Context<Event> {
     pub is_owner: bool,
 }
 
+/// Rejects the event unless its sender is the owner. Returns `true`
+/// when the caller may proceed; on `false` the result is already
+/// rejected and the callback should return immediately:
+///
+/// ```rust
+/// use ave_contract_sdk as sdk;
+/// # use serde::{Deserialize, Serialize};
+/// # #[derive(Deserialize, Serialize)] struct S;
+/// # #[derive(Deserialize, Serialize)] enum E { Privileged }
+/// # let context = sdk::Context { event: E::Privileged, is_owner: false };
+/// # let mut result = sdk::ContractResult::new(S);
+/// if !sdk::require_owner(&context, &mut result) {
+///     return;
+/// }
+/// # assert!(!result.success);
+/// ```
+pub fn require_owner<Event, State>(
+    context: &Context<Event>,
+    result: &mut ContractResult<State>,
+) -> bool {
+    if context.is_owner {
+        return true;
+    }
+    result.reject("Only the owner can perform this action");
+    false
+}
+
 /// Contract execution result.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ContractResult<State> {
@@ -109,17 +136,24 @@ impl ContractInitCheck {
 ///
 /// # Example
 ///
-/// ```ignore
-/// #[unsafe(no_mangle)]
-/// pub unsafe fn init_check_function(state_ptr: i32) -> u32 {
-///     sdk::check_init_data(state_ptr, |state: &MyState, result| {
-///         if state.value > 100 {
-///             result.reject("Value too high");
-///         } else {
-///             result.accept();
-///         }
-///     })
-/// }
+/// The exported `init_check_function` delegates its decision to a
+/// callback like this one (shown here as plain logic so the doctest
+/// compiles without a WASM host):
+///
+/// ```rust
+/// use ave_contract_sdk as sdk;
+/// use serde::{Deserialize, Serialize};
+///
+/// #[derive(Deserialize, Serialize)]
+/// struct MyState { value: u32 }
+///
+/// let check = |state: &MyState, result: &mut sdk::ContractInitCheck| {
+///     if state.value > 100 {
+///         result.reject("Value too high");
+///     } else {
+///         result.accept();
+///     }
+/// };
 /// ```
 pub fn check_init_data<State, F>(state_ptr: i32, callback: F) -> u32
 where
@@ -174,31 +208,35 @@ where
 ///
 /// # Example
 ///
-/// ```ignore
-/// #[unsafe(no_mangle)]
-/// pub unsafe fn main_function(
-///     state_ptr: i32,
-///     init_state_ptr: i32,
-///     event_ptr: i32,
-///     is_owner: i32,
-/// ) -> u32 {
-///     sdk::execute_contract(state_ptr, init_state_ptr, event_ptr, is_owner, |context, result| {
-///         match &context.event {
-///             Event::Update { value } => {
-///                 result.state.value = *value;
+/// The exported `main_function` delegates its decision to a callback
+/// like this one (shown here as plain logic so the doctest compiles
+/// without a WASM host):
+///
+/// ```rust
+/// use ave_contract_sdk as sdk;
+/// use serde::{Deserialize, Serialize};
+///
+/// #[derive(Deserialize, Serialize)]
+/// struct MyState { value: u32, deleted: bool }
+/// #[derive(Deserialize, Serialize)]
+/// enum Event { Update { value: u32 }, Delete }
+///
+/// let logic = |context: &sdk::Context<Event>, result: &mut sdk::ContractResult<MyState>| {
+///     match &context.event {
+///         Event::Update { value } => {
+///             result.state.value = *value;
+///             result.accept();
+///         }
+///         Event::Delete => {
+///             if context.is_owner {
+///                 result.state.deleted = true;
 ///                 result.accept();
-///             }
-///             Event::Delete => {
-///                 if context.is_owner {
-///                     result.state.deleted = true;
-///                     result.accept();
-///                 } else {
-///                     result.reject("Only owner can delete");
-///                 }
+///             } else {
+///                 result.reject("Only owner can delete");
 ///             }
 ///         }
-///     })
-/// }
+///     }
+/// };
 /// ```
 pub fn execute_contract<F, State, Event>(
     state_ptr: i32,

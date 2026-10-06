@@ -16,7 +16,10 @@ use wasmtime::{ExternType, FuncType, Linker, Module, Store, Trap, ValType};
 
 use crate::runtime::{
     InvalidModuleKind, ResolvedMachineSpec, RuntimeError, WasmLimits,
-    config::{MAX_FUEL, MAX_FUEL_COMPILATION, create_secure_wasmtime_config},
+    config::{
+        MAX_FUEL, MAX_FUEL_COMPILATION, MAX_MEMORY_BYTES, create_secure_wasmtime_config,
+        declared_min_memory_bytes,
+    },
     executor::{ExecutionResult, ExecutionStats},
     host::{MemoryManager, generate_linker},
     metrics::ContractMetrics,
@@ -25,19 +28,16 @@ use crate::runtime::{
 const SDK_FUNCTIONS: &[&str] = &["pointer_len", "alloc", "read_bytes", "write_bytes"];
 
 /// A precompiled contract module ready for validation and execution.
+/// Holds only the deserialized module: the serialized bytes live on
+/// disk after persisting and are never needed resident (regenerable
+/// via `Module::serialize` if a use ever appears).
 pub struct CompiledModule {
     module: Arc<Module>,
-    precompiled_bytes: Vec<u8>,
 }
 
 impl CompiledModule {
     pub(crate) fn inner(&self) -> &Module {
         &self.module
-    }
-
-    /// Returns the engine-serialized (precompiled) bytes of this module.
-    pub fn precompiled_bytes(&self) -> &[u8] {
-        &self.precompiled_bytes
     }
 }
 
@@ -56,7 +56,7 @@ impl ContractRuntime {
             WasmLimits::build(s.ram_mb, s.cpu_cores)
         });
         let engine = wasmtime::Engine::new(&create_secure_wasmtime_config(&limits))
-            .map_err(|e| RuntimeError::EngineCreation(e.to_string()))?;
+            .map_err(|e| RuntimeError::EngineCreation(format!("{e:#}")))?;
         let linker = generate_linker(&engine)
             .map_err(|e| RuntimeError::EngineCreation(format!("linker setup failed: {e}")))?;
         Ok(Self {
@@ -88,30 +88,49 @@ impl ContractRuntime {
     }
 
     /// Precompiles `wasm_bytes` and deserializes them into a `CompiledModule`.
+    /// Returns the module together with its serialized bytes (for the
+    /// caller to persist); the module itself retains no copy.
     ///
     /// # Safety
     ///
     /// The precompiled bytes are produced by this engine's own `precompile_module` and
     /// immediately deserialized with the same engine, so they are guaranteed compatible
     /// with `self.engine`.
-    pub fn compile(&self, wasm_bytes: &[u8]) -> Result<CompiledModule, RuntimeError> {
+    pub fn compile(&self, wasm_bytes: &[u8]) -> Result<(CompiledModule, Vec<u8>), RuntimeError> {
+        // Fail fast on modules no compliant node could ever
+        // instantiate: deterministic fleet-wide, so compilers reject
+        // them with a verdict instead of anchoring bytes every
+        // evaluator answers `Unavailable` to until the deadline burns.
+        if let Some(min_bytes) = declared_min_memory_bytes(wasm_bytes)
+            && min_bytes > MAX_MEMORY_BYTES as u64
+        {
+            return Err(RuntimeError::InvalidModule(
+                InvalidModuleKind::ExcessiveMemory {
+                    min_bytes,
+                    max_bytes: MAX_MEMORY_BYTES,
+                },
+            ));
+        }
         let precompiled_bytes = self
             .engine
             .precompile_module(wasm_bytes)
-            .map_err(|e| RuntimeError::PrecompileFailed(e.to_string()))?;
+            .map_err(|e| RuntimeError::PrecompileFailed(format!("{e:#}")))?;
 
         let module = unsafe {
             Module::deserialize(&self.engine, &precompiled_bytes)
-                .map_err(|e| RuntimeError::DeserializationFailed(e.to_string()))?
+                .map_err(|e| RuntimeError::DeserializationFailed(format!("{e:#}")))?
         };
 
-        Ok(CompiledModule {
-            module: Arc::new(module),
+        Ok((
+            CompiledModule {
+                module: Arc::new(module),
+            },
             precompiled_bytes,
-        })
+        ))
     }
 
-    /// Loads a module from caller-supplied precompiled bytes.
+    /// Loads a module from caller-supplied precompiled bytes. No copy
+    /// of the bytes is retained.
     ///
     /// # Safety
     ///
@@ -124,17 +143,23 @@ impl ContractRuntime {
     ) -> Result<CompiledModule, RuntimeError> {
         let module = unsafe {
             Module::deserialize(&self.engine, precompiled_bytes)
-                .map_err(|e| RuntimeError::DeserializationFailed(e.to_string()))?
+                .map_err(|e| RuntimeError::DeserializationFailed(format!("{e:#}")))?
         };
 
         Ok(CompiledModule {
             module: Arc::new(module),
-            precompiled_bytes: precompiled_bytes.to_vec(),
         })
     }
 
     /// Validates that `module` imports exactly the SDK functions, exposes `main_function`
     /// and `init_check_function`, and accepts `initial_state`.
+    ///
+    /// # Effects
+    ///
+    /// This is not a pure inspection: it instantiates the module and
+    /// executes `init_check_function` under `MAX_FUEL_COMPILATION`.
+    /// Callers must treat it as untrusted-code execution (fuel-metered
+    /// and memory-limited, but execution nonetheless).
     pub fn validate(
         &self,
         module: &CompiledModule,
@@ -203,12 +228,12 @@ impl ContractRuntime {
         store.limiter(|data| &mut data.store_limits);
         store
             .set_fuel(MAX_FUEL_COMPILATION)
-            .map_err(|e| RuntimeError::FuelLimitError(e.to_string()))?;
+            .map_err(|e| RuntimeError::FuelLimitError(format!("{e:#}")))?;
 
         let instance = self
             .linker
             .instantiate(&mut store, module.inner())
-            .map_err(|e| RuntimeError::InstantiationFailed(e.to_string()))?;
+            .map_err(|e| RuntimeError::InstantiationFailed(format!("{e:#}")))?;
 
         let _ = instance
             .get_typed_func::<(u32, u32, u32, u32), u32>(&mut store, "main_function")
@@ -224,7 +249,7 @@ impl ContractRuntime {
 
         let result_ptr = init_contract_entrypoint
             .call(&mut store, state_ptr)
-            .map_err(|e| RuntimeError::ContractExecutionFailed(e.to_string()))?;
+            .map_err(|e| RuntimeError::ContractExecutionFailed(format!("{e:#}")))?;
 
         check_init_result(&store, result_ptr)?;
         Ok(())
@@ -247,7 +272,15 @@ impl ContractRuntime {
         let result = self.execute_inner(module, state, init_state, event, is_owner);
 
         if let Some(metrics) = &self.metrics {
-            let result_label = if result.is_ok() { "success" } else { "error" };
+            // Business outcome, not host outcome: a contract that
+            // rejects (`success: false`) executed fine — counting it
+            // as "success" lies in dashboards. Only traps and host
+            // failures are "error".
+            let result_label = match &result {
+                Ok((execution, _)) if execution.success => "accepted",
+                Ok(_) => "rejected",
+                Err(_) => "error",
+            };
             metrics.observe_contract_execution(result_label, started_at.elapsed());
         }
 
@@ -269,12 +302,12 @@ impl ContractRuntime {
         store.limiter(|data| &mut data.store_limits);
         store
             .set_fuel(MAX_FUEL)
-            .map_err(|e| RuntimeError::FuelLimitError(e.to_string()))?;
+            .map_err(|e| RuntimeError::FuelLimitError(format!("{e:#}")))?;
 
         let instance = self
             .linker
             .instantiate(&mut store, module.inner())
-            .map_err(|e| RuntimeError::InstantiationFailed(e.to_string()))?;
+            .map_err(|e| RuntimeError::InstantiationFailed(format!("{e:#}")))?;
 
         let contract_entrypoint = instance
             .get_typed_func::<(u32, u32, u32, u32), u32>(&mut store, "main_function")
@@ -327,12 +360,24 @@ impl ContractRuntime {
                     result,
                     ExecutionStats {
                         fuel_consumed,
-                        memory_bytes: memory_bytes as usize,
+                        memory_bytes: usize::try_from(memory_bytes).unwrap_or(usize::MAX),
                         fuel_exhausted: false,
                     },
                 ))
             }
-            Err(e) => Err(RuntimeError::ContractExecutionFailed(e.to_string())),
+            Err(e) => {
+                // Typed out-of-fuel: deterministic (same fuel budget
+                // everywhere), so callers can return a verdict instead
+                // of treating it like a broken node. The stats would
+                // otherwise be lost with the early return.
+                if fuel_exhausted {
+                    Err(RuntimeError::OutOfFuel {
+                        consumed: fuel_consumed,
+                    })
+                } else {
+                    Err(RuntimeError::ContractExecutionFailed(format!("{e:#}")))
+                }
+            }
         }
     }
 
@@ -347,7 +392,7 @@ impl ContractRuntime {
             .hash(&mut hasher);
         hash_borsh(&*hash.hasher(), &hasher.finish()).map_err(|e| {
             RuntimeError::SerializationError {
-                context: "engine fingerprint",
+                context: "engine fingerprint".to_owned(),
                 details: e.to_string(),
             }
         })
@@ -390,7 +435,7 @@ fn value_to_contract_data(value: &ValueWrapper) -> Result<ContractData, RuntimeE
     serde_json::to_vec(&value.0)
         .map(ContractData)
         .map_err(|e| RuntimeError::SerializationError {
-            context: "value to contract data",
+            context: "value to contract data".to_owned(),
             details: e.to_string(),
         })
 }
@@ -402,7 +447,7 @@ fn generate_context(
     let mut context = MemoryManager::from_limits(limits);
     let data = value_to_contract_data(state)?;
     let bytes = to_vec(&data).map_err(|e| RuntimeError::SerializationError {
-        context: "context borsh",
+        context: "context borsh".to_owned(),
         details: e.to_string(),
     })?;
     let ptr = context
@@ -424,7 +469,7 @@ fn generate_execution_context(
 
     let state_data = value_to_contract_data(state)?;
     let state_bytes = to_vec(&state_data).map_err(|e| RuntimeError::SerializationError {
-        context: "state borsh",
+        context: "state borsh".to_owned(),
         details: e.to_string(),
     })?;
     let state_ptr = context
@@ -436,7 +481,7 @@ fn generate_execution_context(
 
     let init_data = value_to_contract_data(init_state)?;
     let init_bytes = to_vec(&init_data).map_err(|e| RuntimeError::SerializationError {
-        context: "init state borsh",
+        context: "init state borsh".to_owned(),
         details: e.to_string(),
     })?;
     let init_ptr = context
@@ -448,7 +493,7 @@ fn generate_execution_context(
 
     let event_data = value_to_contract_data(event)?;
     let event_bytes = to_vec(&event_data).map_err(|e| RuntimeError::SerializationError {
-        context: "event borsh",
+        context: "event borsh".to_owned(),
         details: e.to_string(),
     })?;
     let event_ptr = context
@@ -468,7 +513,7 @@ fn check_init_result(store: &Store<MemoryManager>, result_ptr: u32) -> Result<()
         .map_err(|e| RuntimeError::MemoryAllocationFailed(e.to_string()))?;
     let check = ContractInitCheckData::try_from_slice(memory).map_err(|e| {
         RuntimeError::SerializationError {
-            context: "init check result",
+            context: "init check result".to_owned(),
             details: e.to_string(),
         }
     })?;
@@ -489,14 +534,14 @@ fn get_execution_result(
         .map_err(|e| RuntimeError::MemoryAllocationFailed(e.to_string()))?;
     let result = ContractResultData::try_from_slice(memory).map_err(|e| {
         RuntimeError::SerializationError {
-            context: "execution result",
+            context: "execution result".to_owned(),
             details: e.to_string(),
         }
     })?;
     let final_state = serde_json::from_slice(&result.final_state.0)
         .map(ValueWrapper)
         .map_err(|e| RuntimeError::SerializationError {
-            context: "final state json",
+            context: "final state json".to_owned(),
             details: e.to_string(),
         })?;
     Ok(ExecutionResult {

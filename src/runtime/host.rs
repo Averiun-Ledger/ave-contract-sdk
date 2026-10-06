@@ -57,7 +57,13 @@ impl MemoryManager {
             });
         }
         self.memory.resize(new_len, 0);
-        self.map.insert(current_len, len);
+        // Zero-length allocs are not tracked: they address no bytes,
+        // and tracking them would let a guest inflate the map one
+        // entry per fuel unit. `get_pointer_len` reports them unknown
+        // (-1), like any untracked pointer.
+        if len > 0 {
+            self.map.insert(current_len, len);
+        }
         Ok(current_len)
     }
 

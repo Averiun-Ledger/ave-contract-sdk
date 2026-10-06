@@ -38,7 +38,7 @@ fn contract_logic(
     let state = &mut contract_result.state;
     match &context.event {
         StateEvent::ChangeData { data } => {
-            state.data = data.clone();
+            state.data.clone_from(data);
         }
     }
     contract_result.accept();

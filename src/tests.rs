@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 /// Helper: serializes `data` as JSON inside a `ContractData`, then Borsh-serializes
 /// that wrapper and stores it in mock host memory. Returns the simulated host pointer.
 ///
-/// **Note:** does **not** reset the mock host memory; callers must call
-/// `externf::reset()` themselves when needed.
+/// **Note:** does **not** reset the mock host memory; hold a
+/// `MockHostGuard` in the calling test.
 fn setup_host_data<T: Serialize>(data: &T) -> i32 {
     let json_bytes = serde_json::to_vec(data).unwrap();
     let contract_data = ContractData(json_bytes);
@@ -161,7 +161,7 @@ fn test_contract_init_check_reject() {
 
 #[test]
 fn test_get_from_context_success() {
-    externf::reset();
+    let _mock_host = externf::MockHostGuard::hold();
     let payload = vec![1, 2, 3, 4, 5];
     let ptr = externf::store_data(payload.clone());
 
@@ -172,7 +172,7 @@ fn test_get_from_context_success() {
 
 #[test]
 fn test_get_from_context_oversized() {
-    externf::reset();
+    let _mock_host = externf::MockHostGuard::hold();
     let huge = vec![0u8; (MAX_DATA_SIZE as usize) + 1];
     let ptr = externf::store_data(huge);
 
@@ -186,7 +186,7 @@ fn test_get_from_context_oversized() {
 
 #[test]
 fn test_get_from_context_exactly_at_limit() {
-    externf::reset();
+    let _mock_host = externf::MockHostGuard::hold();
     let at_limit = vec![7u8; MAX_DATA_SIZE as usize];
     let ptr = externf::store_data(at_limit.clone());
 
@@ -197,7 +197,7 @@ fn test_get_from_context_exactly_at_limit() {
 
 #[test]
 fn test_get_from_context_negative_len() {
-    externf::reset();
+    let _mock_host = externf::MockHostGuard::hold();
     externf::set_force_pointer_len(-1);
 
     let result = get_from_context(1234);
@@ -216,7 +216,7 @@ fn test_get_from_context_negative_len() {
 
 #[test]
 fn test_store_success() {
-    externf::reset();
+    let _mock_host = externf::MockHostGuard::hold();
     let data = ContractInitCheckData::ok();
 
     let ptr = store(&data);
@@ -232,7 +232,7 @@ fn test_store_success() {
 
 #[test]
 fn test_store_alloc_fails() {
-    externf::reset();
+    let _mock_host = externf::MockHostGuard::hold();
     externf::set_force_alloc_zero(true);
     let data = ContractInitCheckData::ok();
 
@@ -265,7 +265,7 @@ fn test_read_and_parse_success() {
 
 #[test]
 fn test_read_and_parse_deserialize_error() {
-    externf::reset();
+    let _mock_host = externf::MockHostGuard::hold();
     let bad_borsh = vec![0xFF, 0xFF, 0xFF, 0xFF];
     let ptr = externf::store_data(bad_borsh);
 
@@ -276,7 +276,7 @@ fn test_read_and_parse_deserialize_error() {
 
 #[test]
 fn test_read_and_parse_json_error() {
-    externf::reset();
+    let _mock_host = externf::MockHostGuard::hold();
     // Valid Borsh of ContractData, but inner bytes are not valid JSON
     let contract_data = ContractData(vec![0xFF, 0xFF]);
     let borsh_bytes = borsh::to_vec(&contract_data).unwrap();
@@ -332,7 +332,7 @@ fn test_check_init_data_rejected() {
 
 #[test]
 fn test_check_init_data_invalid_state() {
-    externf::reset();
+    let _mock_host = externf::MockHostGuard::hold();
     let bad_borsh = vec![0xFF, 0xFF, 0xFF, 0xFF];
     let ptr = externf::store_data(bad_borsh);
 
@@ -352,7 +352,7 @@ fn test_check_init_data_invalid_state() {
 
 #[test]
 fn test_execute_contract_success() {
-    externf::reset();
+    let _mock_host = externf::MockHostGuard::hold();
     let state = TestState {
         value: 5,
         name: "contract".to_string(),
@@ -384,7 +384,7 @@ fn test_execute_contract_success() {
 
 #[test]
 fn test_execute_contract_fallback_to_init_state() {
-    externf::reset();
+    let _mock_host = externf::MockHostGuard::hold();
     // Invalid current state pointer (bad borsh)
     let bad_state_ptr = externf::store_data(vec![0xFF]);
 
@@ -420,7 +420,7 @@ fn test_execute_contract_fallback_to_init_state() {
 
 #[test]
 fn test_execute_contract_invalid_event() {
-    externf::reset();
+    let _mock_host = externf::MockHostGuard::hold();
     let state = TestState {
         value: 5,
         name: "test".to_string(),
@@ -445,7 +445,7 @@ fn test_execute_contract_invalid_event() {
 
 #[test]
 fn test_execute_contract_invalid_both_states() {
-    externf::reset();
+    let _mock_host = externf::MockHostGuard::hold();
     let bad_state = externf::store_data(vec![0xFF]);
     let bad_event = externf::store_data(vec![0xFF]);
 
@@ -473,7 +473,7 @@ struct NoCloneState {
 
 #[test]
 fn test_check_init_data_without_clone_state() {
-    externf::reset();
+    let _mock_host = externf::MockHostGuard::hold();
     let state = NoCloneState { value: 7 };
     let ptr = setup_host_data(&state);
 
@@ -492,7 +492,7 @@ fn test_check_init_data_without_clone_state() {
 
 #[test]
 fn test_execute_contract_without_clone_state() {
-    externf::reset();
+    let _mock_host = externf::MockHostGuard::hold();
     let state = NoCloneState { value: 1 };
     let state_ptr = setup_host_data(&state);
     let event = TestEvent::Increment;
@@ -523,7 +523,7 @@ fn test_owner_flag_const_matches_runtime_protocol() {
 
 #[test]
 fn test_execute_contract_rejected_by_callback() {
-    externf::reset();
+    let _mock_host = externf::MockHostGuard::hold();
     let state = TestState {
         value: 5,
         name: "test".to_string(),
@@ -567,7 +567,7 @@ fn test_check_init_data_store_fails() {
 
 #[test]
 fn test_execute_contract_store_fails() {
-    externf::reset();
+    let _mock_host = externf::MockHostGuard::hold();
     let state = TestState {
         value: 5,
         name: "test".to_string(),
@@ -609,7 +609,7 @@ struct DummyEvent;
 
 #[test]
 fn test_execute_contract_state_serialize_fails() {
-    externf::reset();
+    let _mock_host = externf::MockHostGuard::hold();
     // FailingState is a unit struct and deserializes from JSON `null`.
     // We cannot use `setup_host_data` because FailingState does not implement
     // Serialize, so we build the host payload manually.
@@ -670,7 +670,7 @@ fn test_contract_init_check_json_roundtrip() {
 
 #[test]
 fn test_is_owner_boundary_values() {
-    externf::reset();
+    let _mock_host = externf::MockHostGuard::hold();
     let state = TestState {
         value: 0,
         name: "test".to_string(),
@@ -723,7 +723,7 @@ fn test_is_owner_boundary_values() {
 
 #[test]
 fn test_check_init_data_callback_leaves_default() {
-    externf::reset();
+    let _mock_host = externf::MockHostGuard::hold();
     let state = TestState {
         value: 10,
         name: "test".to_string(),
@@ -802,7 +802,7 @@ fn test_contract_init_check_data_roundtrip() {
 
 #[test]
 fn test_execute_contract_event_rename() {
-    externf::reset();
+    let _mock_host = externf::MockHostGuard::hold();
     let state = TestState {
         value: 5,
         name: "old_name".to_string(),
@@ -835,7 +835,7 @@ fn test_execute_contract_event_rename() {
 
 #[test]
 fn test_execute_contract_event_decrement() {
-    externf::reset();
+    let _mock_host = externf::MockHostGuard::hold();
     let state = TestState {
         value: 10,
         name: "counter".to_string(),
@@ -867,7 +867,7 @@ fn test_execute_contract_event_decrement() {
 
 #[test]
 fn test_check_init_data_with_validation() {
-    externf::reset();
+    let _mock_host = externf::MockHostGuard::hold();
     let valid_state = TestState {
         value: 50,
         name: "valid".to_string(),
@@ -900,4 +900,28 @@ fn test_check_init_data_with_validation() {
     let result: ContractInitCheckData = read_host_result(result_ptr);
     assert!(!result.success);
     assert!(result.error.contains("value too high"));
+}
+
+/// Property: arbitrary byte payloads survive the mock host boundary
+/// (`store_data` → `get_from_context`) byte-identical. This is the
+/// Borsh+JSON pipeline's foundation: `serialize -> deserialize` must
+/// be idempotent for every input, not just hand-picked ones.
+#[cfg(test)]
+mod prop_tests {
+    use proptest::prelude::*;
+
+    use super::{externf, get_from_context};
+
+    proptest! {
+        #[test]
+        fn mock_host_roundtrip_arbitrary_bytes(
+            payload in prop::collection::vec(any::<u8>(), 0..4096),
+        ) {
+            let _mock_host = externf::MockHostGuard::hold();
+            let ptr = externf::store_data(payload.clone());
+            let back =
+                get_from_context(ptr).expect("roundtrip must succeed");
+            prop_assert_eq!(back, payload);
+        }
+    }
 }

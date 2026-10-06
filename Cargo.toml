@@ -10,6 +10,10 @@ repository = "https://github.com/Averiun-Ledger/ave-contract-sdk"
 license = "AGPL-3.0-only"
 keywords = ["blockchain", "distributed-ledger", "Averiun", "sustainability"]
 rust-version = "1.95.0"
+# Keep the published crate to what compilers need: the embedded
+# contract templates stay (contract builds read them), everything
+# else (tests, coverage, scratch dirs) stays out.
+exclude = ["Cargo.lock", "tests/", "coverage/", ".github/"]
 
 [features]
 default = []
@@ -26,7 +30,10 @@ serde_json = "1.0.151"
 thiserror = "2.0.20"
 borsh = { version = "1.8.0", features = ["derive"] }
 ave-common = { path = "../ave/common", version = "0.10.0", default-features = false, features = ["value-wrapper"] }
-wasmtime = { version = "48.0.1", optional = true }
+# Exact pin: every wasmtime minor can change codegen, and the whole
+# fleet must execute identical native code (see temporal/auditoria
+# §13). Bump only in a joint fleet rollout.
+wasmtime = { version = "=48.0.1", optional = true }
 prometheus-client = { version = "0.25.0", optional = true }
 
 [lib]
@@ -34,3 +41,4 @@ crate-type = ["cdylib", "rlib"]
 
 [dev-dependencies]
 wat = "1"
+proptest = "1"

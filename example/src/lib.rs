@@ -15,6 +15,8 @@ enum StateEvent {
     ModTwo { data: u32 },
     ModThree { data: u32 },
     ModAll { one: u32, two: u32, three: u32 },
+    /// Owner-only: resets every counter to zero.
+    ResetAll,
 }
 
 #[unsafe(no_mangle)]
@@ -61,6 +63,14 @@ fn contract_logic(
             state.one = *one;
             state.two = *two;
             state.three = *three;
+        }
+        StateEvent::ResetAll => {
+            if !sdk::require_owner(context, contract_result) {
+                return;
+            }
+            state.one = 0;
+            state.two = 0;
+            state.three = 0;
         }
     }
     contract_result.accept();
@@ -159,6 +169,40 @@ fn contract_test_mod_all() {
     assert_eq!(result.state.two, 20);
     assert_eq!(result.state.three, 30);
     assert!(result.success);
+}
+
+#[test]
+fn contract_test_reset_all_owner_only() {
+    let gated = State {
+        one: 1,
+        two: 2,
+        three: 3,
+    };
+    // Non-owners are rejected without touching state.
+    let context = sdk::Context {
+        event: StateEvent::ResetAll,
+        is_owner: false,
+    };
+    let mut result = sdk::ContractResult::new(gated);
+    contract_logic(&context, &mut result);
+    assert!(!result.success);
+    assert_eq!(result.state.one, 1);
+
+    // The owner resets everything.
+    let context = sdk::Context {
+        event: StateEvent::ResetAll,
+        is_owner: true,
+    };
+    let mut result = sdk::ContractResult::new(State {
+        one: 1,
+        two: 2,
+        three: 3,
+    });
+    contract_logic(&context, &mut result);
+    assert!(result.success);
+    assert_eq!(result.state.one, 0);
+    assert_eq!(result.state.two, 0);
+    assert_eq!(result.state.three, 0);
 }
 
 #[test]

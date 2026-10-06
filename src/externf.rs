@@ -26,8 +26,8 @@ unsafe extern "C" {
 
 #[cfg(test)]
 pub(crate) use test_impl::{
-    alloc, get_data, pointer_len, read_bytes_into_vec, reset, set_force_alloc_zero,
-    set_force_pointer_len, store_data, write_bytes_from_slice,
+    MockHostGuard, alloc, get_data, pointer_len, read_bytes_into_vec,
+    set_force_alloc_zero, set_force_pointer_len, store_data, write_bytes_from_slice,
 };
 
 #[cfg(test)]
@@ -40,6 +40,23 @@ mod test_impl {
         static NEXT_ID: RefCell<i32> = const { RefCell::new(1000) };
         static FORCE_ALLOC_ZERO: RefCell<bool> = const { RefCell::new(false) };
         static FORCE_POINTER_LEN: RefCell<Option<i32>> = const { RefCell::new(None) };
+    }
+
+    /// RAII guard over the mock host state: resets on hold and on
+    /// drop, so a test can never leak fake host memory into the next
+    /// one sharing its thread. Prefer holding one of these over
+    /// calling `reset()` by hand.
+    pub struct MockHostGuard;
+    impl MockHostGuard {
+        pub fn hold() -> Self {
+            reset();
+            Self
+        }
+    }
+    impl Drop for MockHostGuard {
+        fn drop(&mut self) {
+            reset();
+        }
     }
 
     /// Clears the mock host memory and resets pointer allocation.
