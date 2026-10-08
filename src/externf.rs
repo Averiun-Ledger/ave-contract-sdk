@@ -26,8 +26,8 @@ unsafe extern "C" {
 
 #[cfg(test)]
 pub(crate) use test_impl::{
-    MockHostGuard, alloc, get_data, pointer_len, read_bytes_into_vec,
-    set_force_alloc_zero, set_force_pointer_len, store_data, write_bytes_from_slice,
+    MockHostGuard, alloc, get_data, pointer_len, read_bytes_into_vec, set_force_alloc_zero,
+    set_force_pointer_len, store_data, write_bytes_from_slice,
 };
 
 #[cfg(test)]
