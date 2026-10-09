@@ -123,6 +123,38 @@ impl MemoryManager {
         Ok(())
     }
 
+    /// Copies `data` at `offset` bytes into the allocation at `ptr`.
+    ///
+    /// Same bounds checks as [`Self::write_bytes`], but allows
+    /// piecemeal writes (e.g. a length prefix followed by the payload)
+    /// without staging a combined buffer first.
+    pub fn write_bytes_at(
+        &mut self,
+        ptr: usize,
+        offset: usize,
+        data: &[u8],
+    ) -> Result<(), ContractError> {
+        let len = self
+            .map
+            .get(&ptr)
+            .copied()
+            .ok_or(ContractError::InvalidPointer { pointer: ptr })?;
+        let start = ptr
+            .checked_add(offset)
+            .ok_or(ContractError::InvalidPointer { pointer: ptr })?;
+        let end = start
+            .checked_add(data.len())
+            .ok_or(ContractError::InvalidPointer { pointer: ptr })?;
+        if end > ptr.saturating_add(len) || end > self.memory.len() {
+            return Err(ContractError::WriteOutOfBounds {
+                offset: offset.saturating_add(data.len()),
+                size: len,
+            });
+        }
+        self.memory[start..end].copy_from_slice(data);
+        Ok(())
+    }
+
     /// Allocates space for `bytes`, copies them in, and returns the new pointer.
     pub fn add_data_raw(&mut self, bytes: &[u8]) -> Result<usize, ContractError> {
         let ptr = self.alloc(bytes.len())?;

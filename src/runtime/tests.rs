@@ -246,3 +246,37 @@ fn contract_metrics_observe_and_register() {
     let mut registry = prometheus_client::registry::Registry::default();
     metrics.register_into(&mut registry);
 }
+
+#[test]
+fn memory_manager_write_bytes_at_respects_allocation_bounds() {
+    let mut manager = MemoryManager::default();
+    let ptr = manager.alloc(8).unwrap();
+    manager.write_bytes_at(ptr, 0, &[1, 2, 3, 4]).unwrap();
+    manager.write_bytes_at(ptr, 4, &[5, 6, 7, 8]).unwrap();
+    assert_eq!(manager.read_data(ptr).unwrap(), &[1, 2, 3, 4, 5, 6, 7, 8]);
+    // Past the end of the allocation: rejected, never wrapped.
+    let err = manager.write_bytes_at(ptr, 7, &[9, 10]).unwrap_err();
+    assert!(matches!(err, ContractError::WriteOutOfBounds { .. }));
+    // Unknown base pointer: rejected.
+    let err = manager.write_bytes_at(9999, 0, &[1]).unwrap_err();
+    assert!(matches!(err, ContractError::InvalidPointer { .. }));
+}
+
+#[test]
+fn write_contract_data_matches_borsh_encoding() {
+    use ave_common::ContractData;
+    use borsh::to_vec as borsh_to_vec;
+
+    use crate::runtime::contract_runtime::write_contract_data;
+
+    for payload in [&b""[..], b"{}", b"{\"a\":[1,2,3]}", &vec![7u8; 1000]] {
+        let data = ContractData(payload.to_vec());
+        let mut manager = MemoryManager::default();
+        let ptr = write_contract_data(&mut manager, &data).unwrap();
+        assert_eq!(
+            manager.read_data(ptr as usize).unwrap(),
+            borsh_to_vec(&data).unwrap().as_slice(),
+            "staged bytes must be byte-identical to borsh"
+        );
+    }
+}

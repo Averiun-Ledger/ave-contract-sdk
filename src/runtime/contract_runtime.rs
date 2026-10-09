@@ -11,7 +11,7 @@ use ave_common::{
     ContractData, ContractInitCheckData, ContractResultData, ValueWrapper,
     identity::{DigestIdentifier, HashAlgorithm, hash_borsh},
 };
-use borsh::{BorshDeserialize, to_vec};
+use borsh::BorshDeserialize;
 use wasmtime::{ExternType, FuncType, Linker, Module, Store, Trap, ValType};
 
 use crate::runtime::{
@@ -440,23 +440,43 @@ fn value_to_contract_data(value: &ValueWrapper) -> Result<ContractData, RuntimeE
         })
 }
 
+/// Writes `ContractData` into guest staging memory with its borsh
+/// framing but without an intermediate buffer: `ContractData` is a
+/// `Vec<u8>` newtype, so its encoding is exactly a `u32` LE length
+/// followed by the raw bytes. Saves one allocation and one full
+/// memcpy per contract argument.
+pub(crate) fn write_contract_data(
+    context: &mut MemoryManager,
+    data: &ContractData,
+) -> Result<u32, RuntimeError> {
+    let payload = &data.0;
+    let len_u32: u32 = payload
+        .len()
+        .try_into()
+        .map_err(|_| RuntimeError::SerializationError {
+            context: "contract data borsh".to_owned(),
+            details: format!("{} bytes do not fit the borsh u32 length", payload.len()),
+        })?;
+    let ptr = context
+        .alloc(4 + payload.len())
+        .map_err(|e| RuntimeError::MemoryAllocationFailed(e.to_string()))?;
+    context
+        .write_bytes_at(ptr, 0, &len_u32.to_le_bytes())
+        .map_err(|e| RuntimeError::MemoryAllocationFailed(e.to_string()))?;
+    context
+        .write_bytes_at(ptr, 4, payload)
+        .map_err(|e| RuntimeError::MemoryAllocationFailed(e.to_string()))?;
+    Ok(ptr as u32)
+}
+
 fn generate_context(
     state: &ValueWrapper,
     limits: &WasmLimits,
 ) -> Result<(MemoryManager, u32), RuntimeError> {
     let mut context = MemoryManager::from_limits(limits);
     let data = value_to_contract_data(state)?;
-    let bytes = to_vec(&data).map_err(|e| RuntimeError::SerializationError {
-        context: "context borsh".to_owned(),
-        details: e.to_string(),
-    })?;
-    let ptr = context
-        .alloc(bytes.len())
-        .map_err(|e| RuntimeError::MemoryAllocationFailed(e.to_string()))?;
-    context
-        .write_bytes(ptr, &bytes)
-        .map_err(|e| RuntimeError::MemoryAllocationFailed(e.to_string()))?;
-    Ok((context, ptr as u32))
+    let ptr = write_contract_data(&mut context, &data)?;
+    Ok((context, ptr))
 }
 
 fn generate_execution_context(
@@ -468,42 +488,15 @@ fn generate_execution_context(
     let mut context = MemoryManager::from_limits(limits);
 
     let state_data = value_to_contract_data(state)?;
-    let state_bytes = to_vec(&state_data).map_err(|e| RuntimeError::SerializationError {
-        context: "state borsh".to_owned(),
-        details: e.to_string(),
-    })?;
-    let state_ptr = context
-        .alloc(state_bytes.len())
-        .map_err(|e| RuntimeError::MemoryAllocationFailed(e.to_string()))?;
-    context
-        .write_bytes(state_ptr, &state_bytes)
-        .map_err(|e| RuntimeError::MemoryAllocationFailed(e.to_string()))?;
+    let state_ptr = write_contract_data(&mut context, &state_data)?;
 
     let init_data = value_to_contract_data(init_state)?;
-    let init_bytes = to_vec(&init_data).map_err(|e| RuntimeError::SerializationError {
-        context: "init state borsh".to_owned(),
-        details: e.to_string(),
-    })?;
-    let init_ptr = context
-        .alloc(init_bytes.len())
-        .map_err(|e| RuntimeError::MemoryAllocationFailed(e.to_string()))?;
-    context
-        .write_bytes(init_ptr, &init_bytes)
-        .map_err(|e| RuntimeError::MemoryAllocationFailed(e.to_string()))?;
+    let init_ptr = write_contract_data(&mut context, &init_data)?;
 
     let event_data = value_to_contract_data(event)?;
-    let event_bytes = to_vec(&event_data).map_err(|e| RuntimeError::SerializationError {
-        context: "event borsh".to_owned(),
-        details: e.to_string(),
-    })?;
-    let event_ptr = context
-        .alloc(event_bytes.len())
-        .map_err(|e| RuntimeError::MemoryAllocationFailed(e.to_string()))?;
-    context
-        .write_bytes(event_ptr, &event_bytes)
-        .map_err(|e| RuntimeError::MemoryAllocationFailed(e.to_string()))?;
+    let event_ptr = write_contract_data(&mut context, &event_data)?;
 
-    Ok((context, state_ptr as u32, init_ptr as u32, event_ptr as u32))
+    Ok((context, state_ptr, init_ptr, event_ptr))
 }
 
 fn check_init_result(store: &Store<MemoryManager>, result_ptr: u32) -> Result<(), RuntimeError> {
