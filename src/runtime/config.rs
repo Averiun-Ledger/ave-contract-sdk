@@ -49,10 +49,12 @@ impl WasmLimits {
     pub fn build(ram_mb: u64, cpu_cores: usize) -> Self {
         // Math in u64, single saturating conversion at the end: the
         // `as usize` cast it replaces truncates on 32-bit targets.
+        // Floor is MIN_FLEET_MEMORY_BYTES (never below: the smallest
+        // compliant node must instantiate anything the fleet accepts).
         let memory_size = usize::try_from(
             (ram_mb / 512)
                 .saturating_mul(4 * 1024 * 1024)
-                .clamp(4 * 1024 * 1024, MAX_MEMORY_BYTES as u64),
+                .clamp(MIN_FLEET_MEMORY_BYTES as u64, MAX_MEMORY_BYTES as u64),
         )
         .unwrap_or(usize::MAX);
 
@@ -85,6 +87,17 @@ impl WasmLimits {
 /// Kept as the single source of truth: `WasmLimits::build` clamps to
 /// it and `declared_min_memory_bytes` gates against it.
 pub const MAX_MEMORY_BYTES: usize = 32 * 1024 * 1024;
+
+/// Fleet acceptance floor for a module's declared minimum linear
+/// memory: above it the SMALLEST compliant node (Nano profile, 512 MiB:
+/// `memory_size` floor) can not instantiate the module, so compilers
+/// reject it with a verdict instead of anchoring bytes that split the
+/// fleet between nodes with and without capacity. Real contracts
+/// declare ~1 MiB; the gap to this floor is headroom, not a target.
+/// Kept as the single source of truth: `WasmLimits::build` never
+/// clamps `memory_size` below it, and `ContractRuntime::compile`
+/// gates declared minimums against it.
+pub const MIN_FLEET_MEMORY_BYTES: usize = 4 * 1024 * 1024;
 
 /// WASM memory page size in bytes.
 pub const WASM_PAGE_BYTES: u64 = 65_536;

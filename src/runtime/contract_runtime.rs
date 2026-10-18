@@ -17,8 +17,8 @@ use wasmtime::{ExternType, FuncType, Linker, Module, Store, Trap, ValType};
 use crate::runtime::{
     InvalidModuleKind, ResolvedMachineSpec, RuntimeError, WasmLimits,
     config::{
-        MAX_FUEL, MAX_FUEL_COMPILATION, MAX_MEMORY_BYTES, create_secure_wasmtime_config,
-        declared_min_memory_bytes,
+        MAX_FUEL, MAX_FUEL_COMPILATION, MIN_FLEET_MEMORY_BYTES,
+        create_secure_wasmtime_config, declared_min_memory_bytes,
     },
     executor::{ExecutionResult, ExecutionStats},
     host::{MemoryManager, generate_linker},
@@ -97,17 +97,17 @@ impl ContractRuntime {
     /// immediately deserialized with the same engine, so they are guaranteed compatible
     /// with `self.engine`.
     pub fn compile(&self, wasm_bytes: &[u8]) -> Result<(CompiledModule, Vec<u8>), RuntimeError> {
-        // Fail fast on modules no compliant node could ever
+        // Fail fast on modules the smallest compliant node could never
         // instantiate: deterministic fleet-wide, so compilers reject
-        // them with a verdict instead of anchoring bytes every
-        // evaluator answers `Unavailable` to until the deadline burns.
+        // them with a verdict instead of anchoring bytes that split
+        // the fleet between nodes with and without capacity.
         if let Some(min_bytes) = declared_min_memory_bytes(wasm_bytes)
-            && min_bytes > MAX_MEMORY_BYTES as u64
+            && min_bytes > MIN_FLEET_MEMORY_BYTES as u64
         {
             return Err(RuntimeError::InvalidModule(
                 InvalidModuleKind::ExcessiveMemory {
                     min_bytes,
-                    max_bytes: MAX_MEMORY_BYTES,
+                    max_bytes: MIN_FLEET_MEMORY_BYTES,
                 },
             ));
         }

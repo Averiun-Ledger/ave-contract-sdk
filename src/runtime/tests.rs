@@ -170,10 +170,10 @@ fn declared_min_memory_parses_memory_section() {
 
 #[test]
 fn compile_rejects_oversized_minimum_memory() {
-    use crate::runtime::config::MAX_MEMORY_BYTES;
-    // 600 pages (~39 MiB) exceed the 32 MiB instantiable on any node:
-    // deterministic fleet-wide, so compile refuses with a verdict
-    // instead of anchoring bytes every evaluator answers Unavailable.
+    use crate::runtime::config::MIN_FLEET_MEMORY_BYTES;
+    // 600 pages (~39 MiB) exceed the 4 MiB instantiable on the smallest
+    // node: deterministic fleet-wide, so compile refuses with a verdict
+    // instead of anchoring bytes that split the fleet by capacity.
     let wasm = wat::parse_str("(module (memory 600))").unwrap();
     let runtime = ContractRuntime::new(None).unwrap();
     match runtime.compile(&wasm) {
@@ -182,13 +182,24 @@ fn compile_rejects_oversized_minimum_memory() {
             max_bytes,
         })) => {
             assert_eq!(min_bytes, 600 * 65_536);
-            assert_eq!(max_bytes, MAX_MEMORY_BYTES);
+            assert_eq!(max_bytes, MIN_FLEET_MEMORY_BYTES);
         }
         other => panic!("expected ExcessiveMemory, got {:?}", other.is_ok()),
     }
     // A sane minimum still compiles.
     let ok = wat::parse_str("(module (memory 1))").unwrap();
     assert!(runtime.compile(&ok).is_ok());
+    // Exactly at the fleet floor (64 pages = 4 MiB) still compiles;
+    // one page over refuses.
+    let edge = wat::parse_str("(module (memory 64))").unwrap();
+    assert!(runtime.compile(&edge).is_ok());
+    let over = wat::parse_str("(module (memory 65))").unwrap();
+    assert!(matches!(
+        runtime.compile(&over),
+        Err(RuntimeError::InvalidModule(
+            InvalidModuleKind::ExcessiveMemory { .. }
+        ))
+    ));
 }
 
 #[test]

@@ -106,9 +106,9 @@ pub enum InvalidModuleKind {
     UnexpectedImportModule { module: String, name: String },
     /// The module imports a known SDK function with the wrong signature.
     InvalidImportSignature { name: String, expected: String },
-    /// The module declares more minimum linear memory than any compliant
-    /// node can instantiate (`MAX_MEMORY_BYTES`): the failure is
-    /// deterministic fleet-wide.
+    /// The module declares more minimum linear memory than the smallest
+    /// compliant node can instantiate (`MIN_FLEET_MEMORY_BYTES`): the
+    /// failure is deterministic fleet-wide.
     ExcessiveMemory { min_bytes: u64, max_bytes: usize },
 }
 
