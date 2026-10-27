@@ -7,4 +7,5 @@ rustflags = [
     "link-arg=--allow-undefined",
     "--remap-path-prefix={cargo_home}=/cargo-home",
     "--remap-path-prefix={rust_src}=/rustc/{rustc_commit}",
+    "--remap-path-prefix={vendor}=/vendor",
 ]
